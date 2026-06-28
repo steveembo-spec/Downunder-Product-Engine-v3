@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from dpe_catalogue_db import DB_FILE, search_catalogue, supplier_matches_for_sku
 
 
