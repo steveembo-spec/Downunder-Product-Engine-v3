@@ -1,0 +1,22 @@
+{
+    "status": "SUCCESS",
+    "run_date": "26/06/2026 10:43:23",
+    "build_time_iso": "2026-06-26T10:43:23.386327",
+    "supplier_rows": 62769,
+    "products": 62753,
+    "duplicates_merged": 16,
+    "suppliers": [
+        "A1",
+        "Cassons"
+    ],
+    "supplier_count": 2,
+    "image_library_records": 8320,
+    "images": 8320,
+    "missing_images": 54433,
+    "legacy_descriptions": 1207,
+    "descriptions": 6,
+    "default_descriptions": 62747,
+    "missing_cost": 20,
+    "missing_rrp": 18356,
+    "shopify_file": "C:\\Users\\steve\\OneDrive\\Documents\\GitHub\\Downunder-Product-Engine-v3\\output\\dpe_v3_shopify_ready.csv"
+}

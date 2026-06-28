@@ -1,0 +1,23 @@
+{
+    "status": "SUCCESS",
+    "run_date": "26/06/2026 10:55:08",
+    "build_time_iso": "2026-06-26T10:55:08.467475",
+    "supplier_rows": 96140,
+    "products": 95759,
+    "duplicates_merged": 381,
+    "suppliers": [
+        "A1",
+        "Cassons",
+        "Serco"
+    ],
+    "supplier_count": 3,
+    "image_library_records": 8320,
+    "images": 8320,
+    "missing_images": 87439,
+    "legacy_descriptions": 1207,
+    "descriptions": 8,
+    "default_descriptions": 95751,
+    "missing_cost": 204,
+    "missing_rrp": 18532,
+    "shopify_file": "C:\\Users\\steve\\OneDrive\\Documents\\GitHub\\Downunder-Product-Engine-v3\\output\\dpe_v3_shopify_ready.csv"
+}
