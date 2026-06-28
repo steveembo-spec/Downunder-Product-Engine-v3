@@ -21,6 +21,7 @@ from desktop.dialogs.product_detail_dialog import ProductDetailDialog
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ALL_SUPPLIERS = "All Suppliers"
+ALL_BRANDS = "All Brands"
 
 
 class ProductTableModel(QAbstractTableModel):
@@ -135,8 +136,16 @@ class CataloguePage(QWidget):
         self.supplier_filter = QComboBox()
         self.supplier_filter.currentTextChanged.connect(self._apply_filter)
 
+        brand_label = QLabel("Brand:")
+        brand_label.setStyleSheet("font-weight: bold;")
+
+        self.brand_filter = QComboBox()
+        self.brand_filter.currentTextChanged.connect(self._apply_filter)
+
         filter_row.addWidget(supplier_label)
         filter_row.addWidget(self.supplier_filter)
+        filter_row.addWidget(brand_label)
+        filter_row.addWidget(self.brand_filter)
         filter_row.addStretch()
 
         layout.addLayout(filter_row)
@@ -196,6 +205,7 @@ class CataloguePage(QWidget):
             )
 
         self._populate_supplier_filter()
+        self._populate_brand_filter()
         self._apply_filter()
 
     def _populate_supplier_filter(self) -> None:
@@ -228,9 +238,40 @@ class CataloguePage(QWidget):
 
         self.supplier_filter.blockSignals(False)
 
+    def _populate_brand_filter(self) -> None:
+        current_brand = (
+            self.brand_filter.currentText()
+            if self.brand_filter.count()
+            else ALL_BRANDS
+        )
+
+        brands = sorted({
+            product.brand.strip()
+            for product in self.all_products
+            if product.brand and product.brand.strip()
+        })
+
+        self.brand_filter.blockSignals(True)
+        self.brand_filter.clear()
+        self.brand_filter.addItem(ALL_BRANDS)
+
+        for brand in brands:
+            self.brand_filter.addItem(brand)
+
+        if current_brand in [
+            self.brand_filter.itemText(i)
+            for i in range(self.brand_filter.count())
+        ]:
+            self.brand_filter.setCurrentText(current_brand)
+        else:
+            self.brand_filter.setCurrentText(ALL_BRANDS)
+
+        self.brand_filter.blockSignals(False)
+
     def _apply_filter(self) -> None:
         query = self.search_input.text()
         selected_supplier = self.supplier_filter.currentText()
+        selected_brand = self.brand_filter.currentText()
 
         products = self.database.search(query)
 
@@ -239,6 +280,13 @@ class CataloguePage(QWidget):
                 product
                 for product in products
                 if product.supplier and product.supplier.strip() == selected_supplier
+            ]
+
+        if selected_brand and selected_brand != ALL_BRANDS:
+            products = [
+                product
+                for product in products
+                if product.brand and product.brand.strip() == selected_brand
             ]
 
         self.filtered_products = products
@@ -250,10 +298,13 @@ class CataloguePage(QWidget):
         shown = len(self.filtered_products)
 
         supplier = self.supplier_filter.currentText()
+        brand = self.brand_filter.currentText()
+
         search_active = bool(self.search_input.text().strip())
         supplier_active = supplier and supplier != ALL_SUPPLIERS
+        brand_active = brand and brand != ALL_BRANDS
 
-        if search_active or supplier_active:
+        if search_active or supplier_active or brand_active:
             self.summary_label.setText(f"Showing {shown:,} of {total:,} products")
         else:
             self.summary_label.setText(f"Products loaded: {total:,}")
