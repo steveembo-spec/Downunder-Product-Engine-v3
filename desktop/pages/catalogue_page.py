@@ -22,298 +22,163 @@ from desktop.dialogs.product_detail_dialog import ProductDetailDialog
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ALL_SUPPLIERS = "All Suppliers"
 ALL_BRANDS = "All Brands"
+ALL_IMAGES = "All Images"
 
 
 class ProductTableModel(QAbstractTableModel):
     HEADERS = [
-        "SKU",
-        "Title",
-        "Brand",
-        "Supplier",
-        "Cost",
-        "RRP",
-        "Stock",
-        "Category",
-        "Image",
-        "Description",
+        "SKU","Title","Brand","Supplier","Cost","RRP","Stock","Category","Image","Description",
     ]
 
-    def __init__(self, products: list[ProductRecord] | None = None):
+    def __init__(self, products=None):
         super().__init__()
         self.products = products or []
 
-    def rowCount(self, parent=QModelIndex()) -> int:
+    def rowCount(self, parent=QModelIndex()):
         return len(self.products)
 
-    def columnCount(self, parent=QModelIndex()) -> int:
+    def columnCount(self, parent=QModelIndex()):
         return len(self.HEADERS)
 
-    def data(self, index: QModelIndex, role=Qt.DisplayRole):
+    def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
-
-        product = self.products[index.row()]
-
-        if role == Qt.DisplayRole:
-            values = [
-                product.sku,
-                product.title,
-                product.brand,
-                product.supplier,
-                product.cost,
-                product.rrp,
-                product.stock,
-                product.category,
-                product.image_status,
-                product.description_status,
-            ]
-            return values[index.column()]
-
+        p=self.products[index.row()]
+        if role==Qt.DisplayRole:
+            return [
+                p.sku,p.title,p.brand,p.supplier,p.cost,p.rrp,p.stock,
+                p.category,p.image_status,p.description_status
+            ][index.column()]
         return None
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role=Qt.DisplayRole):
-        if role != Qt.DisplayRole:
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role!=Qt.DisplayRole:
             return None
+        return self.HEADERS[section] if orientation==Qt.Horizontal else section+1
 
-        if orientation == Qt.Horizontal:
-            return self.HEADERS[section]
-
-        return section + 1
-
-    def set_products(self, products: list[ProductRecord]) -> None:
+    def set_products(self, products):
         self.beginResetModel()
-        self.products = products
+        self.products=products
         self.endResetModel()
 
-    def product_at(self, row: int) -> ProductRecord | None:
-        if row < 0 or row >= len(self.products):
-            return None
-        return self.products[row]
+    def product_at(self,row):
+        return self.products[row] if 0<=row<len(self.products) else None
 
 
 class CataloguePage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self,parent=None):
         super().__init__(parent)
-
-        self.database = ProductDatabase(PROJECT_ROOT)
-
-        self.all_products: list[ProductRecord] = []
-        self.filtered_products: list[ProductRecord] = []
-
+        self.database=ProductDatabase(PROJECT_ROOT)
+        self.all_products=[]
+        self.filtered_products=[]
         self._build_ui()
         self._load_products()
 
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+    def _build_ui(self):
+        layout=QVBoxLayout(self)
+        h=QLabel("Catalogue")
+        h.setStyleSheet("font-size:24px;font-weight:bold;")
+        layout.addWidget(h)
+        s=QLabel("Search all supplier catalogues by SKU, title, brand, supplier or category.")
+        s.setStyleSheet("color:#666;")
+        layout.addWidget(s)
 
-        heading = QLabel("Catalogue")
-        heading.setStyleSheet("font-size: 24px; font-weight: bold;")
-        layout.addWidget(heading)
-
-        subtitle = QLabel("Search all supplier catalogues by SKU, title, brand, supplier or category.")
-        subtitle.setStyleSheet("color: #666;")
-        layout.addWidget(subtitle)
-
-        search_row = QHBoxLayout()
-
-        self.search_input = QLineEdit()
+        sr=QHBoxLayout()
+        self.search_input=QLineEdit()
         self.search_input.setPlaceholderText("Search SKU, partial SKU, brand, title, supplier...")
         self.search_input.textChanged.connect(self._apply_filter)
-
-        self.reload_button = QPushButton("Reload Catalogue")
+        self.reload_button=QPushButton("Reload Catalogue")
         self.reload_button.clicked.connect(self._load_products)
+        sr.addWidget(self.search_input)
+        sr.addWidget(self.reload_button)
+        layout.addLayout(sr)
 
-        search_row.addWidget(self.search_input)
-        search_row.addWidget(self.reload_button)
-
-        layout.addLayout(search_row)
-
-        filter_row = QHBoxLayout()
-
-        supplier_label = QLabel("Supplier:")
-        supplier_label.setStyleSheet("font-weight: bold;")
-
-        self.supplier_filter = QComboBox()
+        fr=QHBoxLayout()
+        self.supplier_filter=QComboBox()
         self.supplier_filter.currentTextChanged.connect(self._apply_filter)
-
-        brand_label = QLabel("Brand:")
-        brand_label.setStyleSheet("font-weight: bold;")
-
-        self.brand_filter = QComboBox()
+        self.brand_filter=QComboBox()
         self.brand_filter.currentTextChanged.connect(self._apply_filter)
+        self.image_filter=QComboBox()
+        self.image_filter.currentTextChanged.connect(self._apply_filter)
 
-        filter_row.addWidget(supplier_label)
-        filter_row.addWidget(self.supplier_filter)
-        filter_row.addWidget(brand_label)
-        filter_row.addWidget(self.brand_filter)
-        filter_row.addStretch()
+        for txt,widget in [("Supplier:",self.supplier_filter),("Brand:",self.brand_filter),("Image:",self.image_filter)]:
+            l=QLabel(txt)
+            l.setStyleSheet("font-weight:bold;")
+            fr.addWidget(l)
+            fr.addWidget(widget)
+        fr.addStretch()
+        layout.addLayout(fr)
 
-        layout.addLayout(filter_row)
-
-        self.summary_label = QLabel("Products loaded: 0")
+        self.summary_label=QLabel("Products loaded: 0")
         layout.addWidget(self.summary_label)
 
-        self.table_model = ProductTableModel([])
-        self.table = QTableView()
+        self.table_model=ProductTableModel([])
+        self.table=QTableView()
         self.table.setModel(self.table_model)
         self.table.setSelectionBehavior(QTableView.SelectRows)
         self.table.setSelectionMode(QTableView.SingleSelection)
         self.table.setSortingEnabled(False)
         self.table.doubleClicked.connect(self._open_selected_product)
-
-        self.table.setColumnWidth(0, 140)
-        self.table.setColumnWidth(1, 420)
-        self.table.setColumnWidth(2, 160)
-        self.table.setColumnWidth(3, 120)
-        self.table.setColumnWidth(4, 90)
-        self.table.setColumnWidth(5, 90)
-        self.table.setColumnWidth(6, 90)
-        self.table.setColumnWidth(7, 180)
-        self.table.setColumnWidth(8, 100)
-        self.table.setColumnWidth(9, 120)
-
+        widths=[140,420,160,120,90,90,90,180,100,120]
+        for i,w in enumerate(widths):
+            self.table.setColumnWidth(i,w)
         layout.addWidget(self.table)
 
-        button_row = QHBoxLayout()
-
-        self.open_shopify_button = QPushButton("Open Shopify Product")
-        self.edit_product_button = QPushButton("Edit Product")
-        self.rebuild_description_button = QPushButton("Rebuild Description")
-        self.find_image_button = QPushButton("Find Image")
-        self.export_selected_button = QPushButton("Export Selected")
-
-        for button in [
-            self.open_shopify_button,
-            self.edit_product_button,
-            self.rebuild_description_button,
-            self.find_image_button,
-            self.export_selected_button,
-        ]:
-            button.setEnabled(False)
-            button_row.addWidget(button)
-
-        layout.addLayout(button_row)
-
-    def _load_products(self) -> None:
-        self.all_products = self.database.load()
-
+    def _load_products(self):
+        self.all_products=self.database.load()
         if not self.all_products:
-            QMessageBox.warning(
-                self,
-                "Catalogue File Missing",
-                "Could not load catalogue data.\n\nRun the build pipeline first.",
-            )
-
+            QMessageBox.warning(self,"Catalogue File Missing","Could not load catalogue data.\\n\\nRun the build pipeline first.")
         self._populate_supplier_filter()
         self._populate_brand_filter()
+        self.image_filter.blockSignals(True)
+        self.image_filter.clear()
+        self.image_filter.addItems([ALL_IMAGES,"Has Image","Missing Image"])
+        self.image_filter.blockSignals(False)
         self._apply_filter()
 
-    def _populate_supplier_filter(self) -> None:
-        current_supplier = (
-            self.supplier_filter.currentText()
-            if self.supplier_filter.count()
-            else ALL_SUPPLIERS
-        )
-
-        suppliers = sorted({
-            product.supplier.strip()
-            for product in self.all_products
-            if product.supplier and product.supplier.strip()
-        })
-
+    def _populate_supplier_filter(self):
+        cur=self.supplier_filter.currentText() if self.supplier_filter.count() else ALL_SUPPLIERS
+        vals=sorted({p.supplier.strip() for p in self.all_products if p.supplier and p.supplier.strip()})
         self.supplier_filter.blockSignals(True)
         self.supplier_filter.clear()
         self.supplier_filter.addItem(ALL_SUPPLIERS)
-
-        for supplier in suppliers:
-            self.supplier_filter.addItem(supplier)
-
-        if current_supplier in [
-            self.supplier_filter.itemText(i)
-            for i in range(self.supplier_filter.count())
-        ]:
-            self.supplier_filter.setCurrentText(current_supplier)
-        else:
-            self.supplier_filter.setCurrentText(ALL_SUPPLIERS)
-
+        self.supplier_filter.addItems(vals)
+        self.supplier_filter.setCurrentText(cur if cur in [self.supplier_filter.itemText(i) for i in range(self.supplier_filter.count())] else ALL_SUPPLIERS)
         self.supplier_filter.blockSignals(False)
 
-    def _populate_brand_filter(self) -> None:
-        current_brand = (
-            self.brand_filter.currentText()
-            if self.brand_filter.count()
-            else ALL_BRANDS
-        )
-
-        brands = sorted({
-            product.brand.strip()
-            for product in self.all_products
-            if product.brand and product.brand.strip()
-        })
-
+    def _populate_brand_filter(self):
+        cur=self.brand_filter.currentText() if self.brand_filter.count() else ALL_BRANDS
+        vals=sorted({p.brand.strip() for p in self.all_products if p.brand and p.brand.strip()})
         self.brand_filter.blockSignals(True)
         self.brand_filter.clear()
         self.brand_filter.addItem(ALL_BRANDS)
-
-        for brand in brands:
-            self.brand_filter.addItem(brand)
-
-        if current_brand in [
-            self.brand_filter.itemText(i)
-            for i in range(self.brand_filter.count())
-        ]:
-            self.brand_filter.setCurrentText(current_brand)
-        else:
-            self.brand_filter.setCurrentText(ALL_BRANDS)
-
+        self.brand_filter.addItems(vals)
+        self.brand_filter.setCurrentText(cur if cur in [self.brand_filter.itemText(i) for i in range(self.brand_filter.count())] else ALL_BRANDS)
         self.brand_filter.blockSignals(False)
 
-    def _apply_filter(self) -> None:
-        query = self.search_input.text()
-        selected_supplier = self.supplier_filter.currentText()
-        selected_brand = self.brand_filter.currentText()
+    def _apply_filter(self):
+        products=self.database.search(self.search_input.text())
+        sup=self.supplier_filter.currentText()
+        br=self.brand_filter.currentText()
+        img=self.image_filter.currentText()
 
-        products = self.database.search(query)
+        if sup!=ALL_SUPPLIERS:
+            products=[p for p in products if (p.supplier or "").strip()==sup]
+        if br!=ALL_BRANDS:
+            products=[p for p in products if (p.brand or "").strip()==br]
+        if img=="Has Image":
+            products=[p for p in products if str(p.image_status).strip().lower() not in ("","missing","no","none")]
+        elif img=="Missing Image":
+            products=[p for p in products if str(p.image_status).strip().lower() in ("","missing","no","none")]
 
-        if selected_supplier and selected_supplier != ALL_SUPPLIERS:
-            products = [
-                product
-                for product in products
-                if product.supplier and product.supplier.strip() == selected_supplier
-            ]
+        self.filtered_products=products
+        self.table_model.set_products(products)
+        total=len(self.all_products)
+        shown=len(products)
+        active=bool(self.search_input.text().strip()) or sup!=ALL_SUPPLIERS or br!=ALL_BRANDS or img!=ALL_IMAGES
+        self.summary_label.setText(f"Showing {shown:,} of {total:,} products" if active else f"Products loaded: {total:,}")
 
-        if selected_brand and selected_brand != ALL_BRANDS:
-            products = [
-                product
-                for product in products
-                if product.brand and product.brand.strip() == selected_brand
-            ]
-
-        self.filtered_products = products
-        self.table_model.set_products(self.filtered_products)
-        self._update_summary()
-
-    def _update_summary(self) -> None:
-        total = len(self.all_products)
-        shown = len(self.filtered_products)
-
-        supplier = self.supplier_filter.currentText()
-        brand = self.brand_filter.currentText()
-
-        search_active = bool(self.search_input.text().strip())
-        supplier_active = supplier and supplier != ALL_SUPPLIERS
-        brand_active = brand and brand != ALL_BRANDS
-
-        if search_active or supplier_active or brand_active:
-            self.summary_label.setText(f"Showing {shown:,} of {total:,} products")
-        else:
-            self.summary_label.setText(f"Products loaded: {total:,}")
-
-    def _open_selected_product(self, index: QModelIndex) -> None:
-        product = self.table_model.product_at(index.row())
-
-        if not product:
-            return
-
-        dialog = ProductDetailDialog(product, self)
-        dialog.exec()
+    def _open_selected_product(self,index):
+        p=self.table_model.product_at(index.row())
+        if p:
+            ProductDetailDialog(p,self).exec()
