@@ -1,0 +1,43 @@
+============================================================
+DOWNUNDER PRODUCT ENGINE v3
+BUILD REPORT
+============================================================
+
+Run date: 26/06/2026 15:19:46
+Status: SUCCESS
+
+------------------------------------------------------------
+SUPPLIERS
+------------------------------------------------------------
+Supplier rows loaded: 96140
+Unique SKUs exported: 95759
+Duplicate SKUs merged: 381
+Suppliers active: A1, Cassons, Serco
+
+------------------------------------------------------------
+IMAGES
+------------------------------------------------------------
+Image library records: 8320
+Images matched: 8339
+Images missing: 87420
+
+------------------------------------------------------------
+DESCRIPTIONS
+------------------------------------------------------------
+Legacy descriptions loaded: 1207
+Descriptions matched: 8
+Default descriptions used: 95751
+
+------------------------------------------------------------
+PRICING
+------------------------------------------------------------
+Products missing cost: 204
+Products missing RRP: 18532
+
+------------------------------------------------------------
+OUTPUT
+------------------------------------------------------------
+Shopify CSV: C:\Users\steve\OneDrive\Documents\GitHub\Downunder-Product-Engine-v3\output\dpe_v3_shopify_ready.csv
+Build manifest: C:\Users\steve\OneDrive\Documents\GitHub\Downunder-Product-Engine-v3\output\build_manifest.json
+
+============================================================

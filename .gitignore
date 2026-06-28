@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+
+# Local databases
+output/*.db
+
+# Build history
+output/build_history/
+
+# Logs
+*.log
+
+# Windows
+Thumbs.db
+Desktop.ini

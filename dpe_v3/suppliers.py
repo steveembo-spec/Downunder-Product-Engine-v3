@@ -1,0 +1,1 @@
+from dpe_v3.supplier_plugins.loader import load_all_suppliers
