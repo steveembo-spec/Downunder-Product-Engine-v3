@@ -24,3 +24,5 @@ _legacy/
 # Temporary files
 *.tmp
 *.bak
+
+output/*.db
