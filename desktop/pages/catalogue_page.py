@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QTableView,
     QMessageBox,
     QComboBox,
+    QMenu,
+    QApplication,
 )
 
 from core.product_database import ProductDatabase, ProductRecord
@@ -213,6 +215,8 @@ class CataloguePage(QWidget):
         self.table.setSelectionMode(QTableView.SingleSelection)
         self.table.setSortingEnabled(True)
         self.table.doubleClicked.connect(self._open_selected_product)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_context_menu)
 
         widths = [140, 420, 160, 120, 90, 90, 90, 180, 100, 120]
         for i, w in enumerate(widths):
@@ -312,6 +316,31 @@ class CataloguePage(QWidget):
         self.summary_label.setText(
             f"Showing {shown:,} of {total:,} products" if active else f"Products loaded: {total:,}"
         )
+
+    def _show_context_menu(self, pos):
+        index = self.table.indexAt(pos)
+        selected_index = self.table.selectionModel().currentIndex()
+
+        if not selected_index.isValid() and index.isValid():
+            selected_index = index
+
+        if not selected_index.isValid():
+            return
+
+        menu = QMenu(self.table)
+        menu.addAction("Copy SKU", lambda: self._copy_sku_from_index(selected_index))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _copy_sku_from_index(self, index):
+        product = self.table_model.product_at(index.row())
+        if not product:
+            return
+
+        sku = str(product.sku or "").strip()
+        if not sku:
+            return
+
+        QApplication.clipboard().setText(sku)
 
     def _open_selected_product(self, index):
         p = self.table_model.product_at(index.row())
