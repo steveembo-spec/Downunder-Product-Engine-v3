@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from core.product_database import ProductDatabase, ProductRecord
 from desktop.dialogs.product_detail_dialog import ProductDetailDialog
+from desktop.dialogs.supplier_comparison_dialog import SupplierComparisonDialog
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -329,6 +330,7 @@ class CataloguePage(QWidget):
 
         menu = QMenu(self.table)
         menu.addAction("Copy SKU", lambda: self._copy_sku_from_index(selected_index))
+        menu.addAction("Supplier Comparison", lambda: self._show_supplier_comparison(selected_index))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _copy_sku_from_index(self, index):
@@ -341,6 +343,17 @@ class CataloguePage(QWidget):
             return
 
         QApplication.clipboard().setText(sku)
+
+    def _show_supplier_comparison(self, index):
+        product = self.table_model.product_at(index.row())
+        if not product:
+            return
+
+        sku = str(product.sku or "").strip()
+        if not sku:
+            return
+
+        SupplierComparisonDialog(sku, self.database, self).exec()
 
     def _open_selected_product(self, index):
         p = self.table_model.product_at(index.row())
