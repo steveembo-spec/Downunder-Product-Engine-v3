@@ -17,12 +17,13 @@ class SupplierComparisonTableModel(QAbstractTableModel):
     """Table model for displaying supplier comparison data."""
     
     HEADERS = [
-        "Supplier", "SKU", "Brand", "Title", "Cost", "RRP", "Stock", "Image", "Description",
+        "Supplier", "SKU", "Brand", "Title", "Cost", "RRP", "Stock", "Image", "Description", "Recommendation",
     ]
 
-    def __init__(self, products=None):
+    def __init__(self, products=None, preferred_suppliers=None):
         super().__init__()
         self.products = products or []
+        self.preferred_suppliers = preferred_suppliers or []
         self.sort_column = 0
         self.sort_order = Qt.AscendingOrder
 
@@ -39,6 +40,9 @@ class SupplierComparisonTableModel(QAbstractTableModel):
         p = self.products[index.row()]
 
         if role == Qt.DisplayRole:
+            if index.column() == 9:  # Recommendation column
+                return self._get_recommendation(p)
+            
             return [
                 p.supplier,
                 p.sku,
@@ -84,6 +88,11 @@ class SupplierComparisonTableModel(QAbstractTableModel):
         )
 
     def _sort_value(self, product, column):
+        if column == 9:  # Recommendation column
+            # Sort by score (descending), then by recommendation text
+            score = self._calculate_score(product)
+            return (-score, self._get_recommendation(product))
+        
         values = [
             product.supplier,
             product.sku,
@@ -116,9 +125,100 @@ class SupplierComparisonTableModel(QAbstractTableModel):
         except ValueError:
             return 0
 
+    def _calculate_score(self, product):
+        """
+        Calculate the recommendation score for a product.
+        
+        Scoring rules:
+        - Start with 0 points
+        - +100 if supplier is in preferred suppliers list
+        - +50 if product is in stock (stock > 0)
+        - +25 if has image (image_status not "Missing" or empty)
+        - +25 if has description (description_status not "Missing" or empty)
+        - +10 if has lowest cost among all matching suppliers
+        """
+        score = 0
+        
+        # Check if preferred supplier
+        supplier = (product.supplier or "").strip().lower()
+        preferred = [s.strip().lower() for s in self.preferred_suppliers]
+        if supplier in preferred:
+            score += 100
+        
+        # Check if in stock
+        stock_value = self._numeric_value(product.stock)
+        if stock_value > 0:
+            score += 50
+        
+        # Check if has image
+        image = str(product.image_status or "").strip().lower()
+        if image and image not in ("missing", "no", "none", ""):
+            score += 25
+        
+        # Check if has description
+        description = str(product.description_status or "").strip().lower()
+        if description and description not in ("missing", "no", "none", ""):
+            score += 25
+        
+        # Check if lowest cost
+        if self._has_lowest_cost(product):
+            score += 10
+        
+        return score
+
+    def _has_lowest_cost(self, product):
+        """Check if this product has the lowest cost among all matching suppliers."""
+        if not self.products:
+            return False
+        
+        product_cost = self._numeric_value(product.cost)
+        
+        for other in self.products:
+            other_cost = self._numeric_value(other.cost)
+            # If another product has lower cost, return False
+            if other_cost < product_cost:
+                return False
+            # If same cost but different supplier, only one can be "lowest"
+            if other_cost == product_cost and other.supplier != product.supplier:
+                # Use supplier order as tiebreaker (first in list wins)
+                if self.products.index(other) < self.products.index(product):
+                    return False
+        
+        return True
+
+    def _get_recommendation(self, product):
+        """
+        Determine the recommendation text based on product data and score.
+        
+        Rules:
+        - If stock <= 0: "Out of Stock"
+        - If highest score: "⭐ Recommended"
+        - Otherwise: "Good Alternative"
+        """
+        # Check if out of stock
+        stock_value = self._numeric_value(product.stock)
+        if stock_value <= 0:
+            return "Out of Stock"
+        
+        # Check if has highest score
+        product_score = self._calculate_score(product)
+        max_score = max(self._calculate_score(p) for p in self.products) if self.products else 0
+        
+        if product_score == max_score and max_score > 0:
+            return "⭐ Recommended"
+        
+        return "Good Alternative"
+
 
 class SupplierComparisonDialog(QDialog):
     """Dialog for comparing products across suppliers for a given SKU."""
+    
+    # Supplier priority configuration - can be expanded later
+    PREFERRED_SUPPLIERS = [
+        "A1",
+        "Cassons",
+        "Link",
+    ]
     
     def __init__(self, sku: str, database: ProductDatabase, parent=None):
         super().__init__(parent)
@@ -127,7 +227,7 @@ class SupplierComparisonDialog(QDialog):
         self.database = database
         
         self.setWindowTitle(f"Supplier Comparison - {sku}")
-        self.resize(1400, 600)
+        self.resize(1500, 600)
         
         self._build_ui()
         self._load_data()
@@ -141,7 +241,7 @@ class SupplierComparisonDialog(QDialog):
         layout.addWidget(title)
         
         # Table
-        self.table_model = SupplierComparisonTableModel([])
+        self.table_model = SupplierComparisonTableModel([], self.PREFERRED_SUPPLIERS)
         
         self.table = QTableView()
         self.table.setModel(self.table_model)
@@ -150,8 +250,8 @@ class SupplierComparisonDialog(QDialog):
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         
-        # Set column widths
-        widths = [120, 140, 160, 350, 90, 90, 90, 100, 120]
+        # Set column widths (now including Recommendation)
+        widths = [120, 140, 160, 350, 90, 90, 90, 100, 120, 140]
         for i, w in enumerate(widths):
             self.table.setColumnWidth(i, w)
         
