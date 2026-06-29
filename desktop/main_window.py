@@ -16,6 +16,7 @@ from catalogue import CataloguePage as BuildCentrePage
 from pages.catalogue_page import CataloguePage
 from reports import ReportsPage
 from settings import SettingsPage
+from supplier_centre import SupplierCentrePage
 from supplier_manager import SupplierManagerPage
 from version import APP_NAME, COMPANY, VERSION
 
@@ -116,7 +117,7 @@ class MainWindow(QMainWindow):
             "🏠  Dashboard",
             "📦  Catalogue",
             "🛠  Build Centre",
-            "🏭  Suppliers",
+            "🏭  Supplier Centre",
             "📊  Reports",
             "⚙  Settings",
         ]
@@ -156,14 +157,14 @@ class MainWindow(QMainWindow):
         self.dashboard_page = DashboardPage()
         self.catalogue_page = CataloguePage()
         self.build_centre_page = BuildCentrePage()
-        self.supplier_manager_page = SupplierManagerPage()
+        self.supplier_centre_page = SupplierCentrePage()
         self.reports_page = ReportsPage()
         self.settings_page = SettingsPage()
 
         self.stack.addWidget(self.dashboard_page)
         self.stack.addWidget(self.catalogue_page)
         self.stack.addWidget(self.build_centre_page)
-        self.stack.addWidget(self.supplier_manager_page)
+        self.stack.addWidget(self.supplier_centre_page)
         self.stack.addWidget(self.reports_page)
         self.stack.addWidget(self.settings_page)
 
