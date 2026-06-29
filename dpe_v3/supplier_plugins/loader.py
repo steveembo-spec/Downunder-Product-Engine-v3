@@ -2,6 +2,7 @@ import importlib
 import json
 import pkgutil
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ class SupplierPluginStatus:
     input_file: str
     file_exists: bool
     file_size_kb: float
+    last_modified: str
 
 
 def load_configuration() -> dict[str, Any]:
@@ -120,6 +122,7 @@ def discover_plugin_statuses() -> list[SupplierPluginStatus]:
         input_file = ""
         file_exists = False
         file_size_kb = 0.0
+        last_modified = "N/A"
 
         try:
             module = _load_plugin_module(module_name)
@@ -140,6 +143,8 @@ def discover_plugin_statuses() -> list[SupplierPluginStatus]:
 
                 if file_exists:
                     file_size_kb = supplier_file.stat().st_size / 1024
+                    mtime = supplier_file.stat().st_mtime
+                    last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
 
             if enabled:
                 status = "Enabled" if enabled_state else "Installed, disabled"
@@ -163,6 +168,7 @@ def discover_plugin_statuses() -> list[SupplierPluginStatus]:
                 input_file=input_file,
                 file_exists=file_exists,
                 file_size_kb=file_size_kb,
+                last_modified=last_modified,
             )
         )
 
