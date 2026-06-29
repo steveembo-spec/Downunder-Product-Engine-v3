@@ -23,6 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 ALL_SUPPLIERS = "All Suppliers"
 ALL_BRANDS = "All Brands"
 ALL_IMAGES = "All Images"
+ALL_DESCRIPTIONS = "All Descriptions"
 
 
 class ProductTableModel(QAbstractTableModel):
@@ -93,21 +94,45 @@ class CataloguePage(QWidget):
         sr.addWidget(self.reload_button)
         layout.addLayout(sr)
 
-        fr=QHBoxLayout()
+        filter_row_one=QHBoxLayout()
+
         self.supplier_filter=QComboBox()
         self.supplier_filter.currentTextChanged.connect(self._apply_filter)
+
         self.brand_filter=QComboBox()
         self.brand_filter.currentTextChanged.connect(self._apply_filter)
+
+        for txt,widget in [
+            ("Supplier:",self.supplier_filter),
+            ("Brand:",self.brand_filter),
+        ]:
+            l=QLabel(txt)
+            l.setStyleSheet("font-weight:bold;")
+            filter_row_one.addWidget(l)
+            filter_row_one.addWidget(widget)
+
+        filter_row_one.addStretch()
+        layout.addLayout(filter_row_one)
+
+        filter_row_two=QHBoxLayout()
+
         self.image_filter=QComboBox()
         self.image_filter.currentTextChanged.connect(self._apply_filter)
 
-        for txt,widget in [("Supplier:",self.supplier_filter),("Brand:",self.brand_filter),("Image:",self.image_filter)]:
+        self.description_filter=QComboBox()
+        self.description_filter.currentTextChanged.connect(self._apply_filter)
+
+        for txt,widget in [
+            ("Image:",self.image_filter),
+            ("Description:",self.description_filter),
+        ]:
             l=QLabel(txt)
             l.setStyleSheet("font-weight:bold;")
-            fr.addWidget(l)
-            fr.addWidget(widget)
-        fr.addStretch()
-        layout.addLayout(fr)
+            filter_row_two.addWidget(l)
+            filter_row_two.addWidget(widget)
+
+        filter_row_two.addStretch()
+        layout.addLayout(filter_row_two)
 
         self.summary_label=QLabel("Products loaded: 0")
         layout.addWidget(self.summary_label)
@@ -130,10 +155,17 @@ class CataloguePage(QWidget):
             QMessageBox.warning(self,"Catalogue File Missing","Could not load catalogue data.\\n\\nRun the build pipeline first.")
         self._populate_supplier_filter()
         self._populate_brand_filter()
+
         self.image_filter.blockSignals(True)
         self.image_filter.clear()
         self.image_filter.addItems([ALL_IMAGES,"Has Image","Missing Image"])
         self.image_filter.blockSignals(False)
+
+        self.description_filter.blockSignals(True)
+        self.description_filter.clear()
+        self.description_filter.addItems([ALL_DESCRIPTIONS,"Has Description","Missing Description"])
+        self.description_filter.blockSignals(False)
+
         self._apply_filter()
 
     def _populate_supplier_filter(self):
@@ -161,21 +193,34 @@ class CataloguePage(QWidget):
         sup=self.supplier_filter.currentText()
         br=self.brand_filter.currentText()
         img=self.image_filter.currentText()
+        desc=self.description_filter.currentText()
 
         if sup!=ALL_SUPPLIERS:
             products=[p for p in products if (p.supplier or "").strip()==sup]
         if br!=ALL_BRANDS:
             products=[p for p in products if (p.brand or "").strip()==br]
+
         if img=="Has Image":
             products=[p for p in products if str(p.image_status).strip().lower() not in ("","missing","no","none")]
         elif img=="Missing Image":
             products=[p for p in products if str(p.image_status).strip().lower() in ("","missing","no","none")]
 
+        if desc=="Has Description":
+            products=[p for p in products if str(p.description_status).strip().lower() not in ("","missing","no","none")]
+        elif desc=="Missing Description":
+            products=[p for p in products if str(p.description_status).strip().lower() in ("","missing","no","none")]
+
         self.filtered_products=products
         self.table_model.set_products(products)
         total=len(self.all_products)
         shown=len(products)
-        active=bool(self.search_input.text().strip()) or sup!=ALL_SUPPLIERS or br!=ALL_BRANDS or img!=ALL_IMAGES
+        active=(
+            bool(self.search_input.text().strip())
+            or sup!=ALL_SUPPLIERS
+            or br!=ALL_BRANDS
+            or img!=ALL_IMAGES
+            or desc!=ALL_DESCRIPTIONS
+        )
         self.summary_label.setText(f"Showing {shown:,} of {total:,} products" if active else f"Products loaded: {total:,}")
 
     def _open_selected_product(self,index):
