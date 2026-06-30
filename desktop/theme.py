@@ -8,8 +8,10 @@ class Colours:
     CARD = "#1F2937"
     CARD_BORDER = "#374151"
 
-    PRIMARY = "#F59E0B"
-    PRIMARY_HOVER = "#FBBF24"
+    # Downunder Dirtbikes brand colours
+    PRIMARY = "#F2B705"          # Brand gold
+    PRIMARY_HOVER = "#FFC72C"    # Brighter gold
+    NAVY = "#17135E"             # Brand navy
 
     SUCCESS = "#22C55E"
     WARNING = "#F59E0B"
