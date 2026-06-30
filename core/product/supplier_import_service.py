@@ -45,14 +45,21 @@ class SupplierImportService:
         """
         Validate a selected supplier CSV file.
         
+        Internally discovers supplier configuration if expected_file_path is None.
+        
         Args:
             file_path: Path to the CSV file
             supplier_name: Name of the supplier for metadata
-            expected_file_path: Expected path for this supplier (for folder matching)
+            expected_file_path: Expected path for this supplier (for folder matching).
+                                If None, will be discovered automatically.
             
         Returns:
             ValidationResult with validation status and metadata
         """
+        # If expected_file_path not provided, discover it from supplier configuration
+        if expected_file_path is None:
+            expected_file_path = SupplierImportService._get_supplier_file_path(supplier_name)
+        
         # Initialize result with defaults
         result = ValidationResult(
             valid=False,
@@ -123,6 +130,29 @@ class SupplierImportService:
         result.valid = True
         result.error_message = None
         return result
+    
+    @staticmethod
+    def _get_supplier_file_path(supplier_name: str) -> Optional[str]:
+        """
+        Get the configured file path for a supplier by name.
+        
+        Args:
+            supplier_name: Name of the supplier to look up
+            
+        Returns:
+            Full file path for the supplier, or None if not found
+        """
+        try:
+            from dpe_v3.supplier_plugins.loader import discover_plugin_statuses
+            
+            statuses = discover_plugin_statuses()
+            for status in statuses:
+                if status.supplier_name == supplier_name:
+                    return status.input_file
+        except Exception:
+            pass
+        
+        return None
     
     @staticmethod
     def _detect_encoding(file_path: Path) -> Optional[str]:

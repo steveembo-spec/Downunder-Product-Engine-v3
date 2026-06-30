@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QComboBox,
+    QScrollArea,
 )
 from pathlib import Path
 from datetime import datetime
@@ -36,22 +37,57 @@ class SupplierCentrePage(QWidget):
         self.refresh_supplier_statuses()
 
     def build_ui(self):
-        """Build the Supplier Centre UI shell."""
+        """Build the Supplier Centre UI with scrollable content area."""
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(24)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(30, 30, 30, 30)
+        main_layout.setSpacing(24)
 
-        # Header
-        layout.addWidget(PageTitle("Supplier Centre"))
-        layout.addWidget(PageSubtitle(
+        # Header (fixed at top, not scrollable)
+        main_layout.addWidget(PageTitle("Supplier Centre"))
+        main_layout.addWidget(PageSubtitle(
             "Import and validate supplier catalogue files before synchronising the Master Product Database."
         ))
+
+        # Scrollable content area
+        scroll_area = QScrollArea()
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollArea > QWidget > QWidget {
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                background-color: #111827;
+                width: 12px;
+                border: none;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #374151;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #4B5563;
+            }
+        """)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Container widget for scroll area
+        scroll_widget = QWidget()
+        scroll_widget.setStyleSheet("background-color: transparent;")
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(24)
 
         # Configured Suppliers Section
         suppliers_title = QLabel("Configured Suppliers")
         suppliers_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
-        layout.addWidget(suppliers_title)
+        scroll_layout.addWidget(suppliers_title)
 
         # Supplier selector
         selector_layout = QHBoxLayout()
@@ -84,9 +120,9 @@ class SupplierCentrePage(QWidget):
         self.refresh_button.clicked.connect(self.refresh_supplier_statuses)
         selector_layout.addStretch()
         selector_layout.addWidget(self.refresh_button)
-        layout.addLayout(selector_layout)
+        scroll_layout.addLayout(selector_layout)
 
-        # Suppliers table
+        # Suppliers table (reduced height for scroll area)
         self.suppliers_table = QTableWidget()
         self.suppliers_table.setColumnCount(6)
         self.suppliers_table.setHorizontalHeaderLabels([
@@ -116,19 +152,19 @@ class SupplierCentrePage(QWidget):
                 font-weight: 700;
             }
         """)
-        self.suppliers_table.setMinimumHeight(300)
-        layout.addWidget(self.suppliers_table)
+        self.suppliers_table.setMinimumHeight(200)
+        scroll_layout.addWidget(self.suppliers_table)
 
         # Selected File Section
         file_title = QLabel("Selected File")
         file_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
-        layout.addWidget(file_title)
+        scroll_layout.addWidget(file_title)
 
         self.selected_file_info_label = QLabel("No file selected")
         self.selected_file_info_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
         self.selected_file_info_label.setWordWrap(True)
         self.selected_file_info_label.setMaximumHeight(100)
-        layout.addWidget(self.selected_file_info_label)
+        scroll_layout.addWidget(self.selected_file_info_label)
 
         # Validation Result Section
         self.validation_result_label = QLabel("")
@@ -136,29 +172,33 @@ class SupplierCentrePage(QWidget):
         self.validation_result_label.setWordWrap(True)
         self.validation_result_label.setMaximumHeight(150)
         self.validation_result_label.hide()
-        layout.addWidget(self.validation_result_label)
+        scroll_layout.addWidget(self.validation_result_label)
 
         # Action Buttons Section
         buttons_title = QLabel("Actions")
         buttons_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
-        layout.addWidget(buttons_title)
+        scroll_layout.addWidget(buttons_title)
 
         self.browse_button = SecondaryButton("Browse CSV")
         self.browse_button.setEnabled(True)
         self.browse_button.clicked.connect(self.on_browse_csv)
-        layout.addWidget(self.browse_button)
+        scroll_layout.addWidget(self.browse_button)
 
         self.validate_button = SecondaryButton("Validate File")
         self.validate_button.setEnabled(False)
         self.validate_button.clicked.connect(self.on_validate_file)
-        layout.addWidget(self.validate_button)
+        scroll_layout.addWidget(self.validate_button)
 
         self.import_button = PrimaryButton("Import Supplier File")
         self.import_button.setEnabled(False)
         self.import_button.clicked.connect(self.on_import_file)
-        layout.addWidget(self.import_button)
+        scroll_layout.addWidget(self.import_button)
 
-        layout.addStretch()
+        scroll_layout.addStretch()
+
+        # Set the scroll area's widget and add to main layout
+        scroll_area.setWidget(scroll_widget)
+        main_layout.addWidget(scroll_area)
 
     def refresh_supplier_statuses(self):
         """Refresh the supplier statuses from the loader."""
@@ -232,19 +272,6 @@ class SupplierCentrePage(QWidget):
         for status in self.supplier_statuses:
             self.supplier_selector.addItem(status.supplier_name)
 
-    def _format_display_path(self, file_path: str, max_chars: int = 70) -> str:
-        """Format file path for display with ellipsis if too long."""
-        if len(file_path) <= max_chars:
-            return file_path
-        
-        # Show last parts of path with ellipsis
-        path_parts = file_path.replace("\\", "/").split("/")
-        # Try to show at least the filename and one parent directory
-        display_path = "/".join(path_parts[-2:])  # e.g., "A1/A1 pricefile.csv"
-        if len(display_path) < len(file_path):
-            display_path = "..." + display_path
-        return display_path
-
     def on_browse_csv(self):
         """Handler for Browse CSV button - opens file dialog."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -288,10 +315,17 @@ class SupplierCentrePage(QWidget):
         # Format last modified
         last_modified = datetime.fromtimestamp(file_mtime).strftime("%Y-%m-%d %H:%M:%S")
         
-        # Display info with formatted path
-        formatted_path = self._format_display_path(str(file_path))
+        # Display info (shorten path to prevent horizontal scrolling)
+        path_str = str(file_path).replace("\\", "/")
+        path_parts = path_str.split("/")
+        # Show last two parts (folder/filename) with ellipsis if path is longer
+        if len(path_parts) > 2:
+            shortened_path = ".../" + "/".join(path_parts[-2:])
+        else:
+            shortened_path = path_str
+        
         info_text = f"""Selected File:  {file_path.name}
-Path:  {formatted_path}
+Path:  {shortened_path}
 File Size:  {size_text}
 Last Modified:  {last_modified}"""
         
@@ -310,18 +344,10 @@ Last Modified:  {last_modified}"""
         # Get selected supplier name from dropdown
         selected_supplier_name = self.supplier_selector.currentText()
         
-        # Find the supplier status for this supplier to get expected file path
-        expected_file_path = None
-        for status in self.supplier_statuses:
-            if status.supplier_name == selected_supplier_name:
-                expected_file_path = status.input_file
-                break
-        
-        # Validate the file with folder matching
+        # Validate the file - service discovers supplier path internally
         result = SupplierImportService.validate_selected_file(
             self.selected_file_path,
-            selected_supplier_name,
-            expected_file_path=expected_file_path
+            selected_supplier_name
         )
         
         # Display validation result with selected supplier information
@@ -371,3 +397,4 @@ Error:  {error_msg}"""
     def on_import_file(self):
         """Handler for Import Supplier File button (placeholder)."""
         pass
+
