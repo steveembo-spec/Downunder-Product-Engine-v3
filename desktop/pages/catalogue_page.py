@@ -23,6 +23,11 @@ from desktop.dialogs.supplier_comparison_dialog import SupplierComparisonDialog
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# SMOKE TEST: Load 10 products from MasterProductService to prove it works
+# Set to False to use original CSV ProductDatabase
+TEST_MODE_USE_MASTER_PRODUCTS = True
+TEST_MODE_LIMIT = 10  # Only load first 10 products for smoke test
 ALL_SUPPLIERS = "All Suppliers"
 ALL_BRANDS = "All Brands"
 ALL_IMAGES = "All Images"
@@ -134,11 +139,133 @@ class ProductTableModel(QAbstractTableModel):
 class CataloguePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Always instantiate ProductDatabase (no validation happens in __init__)
+        # Validation (CSV file check) only happens in load(), which we skip in TEST_MODE
+        # This keeps dialogs working when they need to access self.database
         self.database = ProductDatabase(PROJECT_ROOT)
         self.all_products = []
         self.filtered_products = []
         self._build_ui()
         self._load_products()
+
+    def _load_from_master_products(self):
+        """Smoke test: Load first 10 products from MasterProductService.
+        
+        This is a minimal test to verify MasterProductService can populate
+        the Catalogue table without changes to dialogs or filters.
+        
+        Database stores supplier_cost and supplier_rrp as TEXT, so they must
+        be converted to float before formatting as currency.
+        
+        Returns:
+            List of ProductRecord objects (compatible with existing code)
+        """
+        def format_currency(value_str):
+            """Safely convert TEXT value to formatted currency string.
+            
+            Args:
+                value_str: Value from database (may be TEXT, None, or invalid)
+                
+            Returns:
+                Formatted string like "$20.25" or empty string
+            """
+            if not value_str:
+                return ""
+            
+            try:
+                float_value = float(value_str)
+                if float_value > 0:
+                    return f"${float_value:.2f}"
+                return ""
+            except (ValueError, TypeError):
+                # If conversion fails, return as-is (shouldn't happen with valid data)
+                return str(value_str) if value_str else ""
+        
+        try:
+            from core.product.master_product_service import MasterProductService
+            
+            service = MasterProductService(PROJECT_ROOT)
+            
+            # Load only first 10 master products (limit for smoke test)
+            master_products = service.list_master_products(limit=TEST_MODE_LIMIT)
+            
+            products = []
+            skipped = 0
+            
+            # Build supplier name cache
+            conn = service.get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT id, supplier_name FROM suppliers")
+                supplier_map = {row[0]: row[1] for row in cur.fetchall()}
+            finally:
+                conn.close()
+            
+            # Convert to ProductRecord format (same as CSV)
+            for master in master_products:
+                # Get supplier products for this master SKU
+                supplier_products = service.list_supplier_products_for_sku(master.sku)
+                
+                if not supplier_products:
+                    # No suppliers - create default record
+                    try:
+                        products.append(ProductRecord(
+                            sku=master.sku,
+                            title=master.title or "",
+                            supplier="",
+                            cost="",
+                            rrp="",
+                            stock="",
+                            brand=master.brand or "",
+                            category=master.category or "",
+                            image_status="Unknown",
+                            description_status=master.description_status or "",
+                            margin="",
+                            raw={"sku": master.sku, "title": master.title}
+                        ))
+                    except Exception as e:
+                        print(f"⚠ Warning: Skipped product {master.sku}: {e}")
+                        skipped += 1
+                else:
+                    # Create one ProductRecord per supplier (flattened)
+                    for sp in supplier_products:
+                        try:
+                            supplier_name = supplier_map.get(sp.supplier_id, "")
+                            # Use format_currency to safely convert TEXT to formatted string
+                            cost = format_currency(sp.supplier_cost)
+                            rrp = format_currency(sp.supplier_rrp)
+                            
+                            products.append(ProductRecord(
+                                sku=master.sku,
+                                title=master.title or "",
+                                supplier=supplier_name,
+                                cost=cost,
+                                rrp=rrp,
+                                stock=str(sp.supplier_stock or 0),
+                                brand=master.brand or "",
+                                category=master.category or "",
+                                image_status="Unknown",
+                                description_status=master.description_status or "",
+                                margin="",
+                                raw={"sku": master.sku, "title": master.title}
+                            ))
+                        except Exception as e:
+                            print(f"⚠ Warning: Skipped supplier variant for {master.sku}: {e}")
+                            skipped += 1
+                            continue
+            
+            result_msg = f"✓ Smoke test: Loaded {len(products)} product records from MasterProductService"
+            if skipped > 0:
+                result_msg += f" ({skipped} skipped due to data issues)"
+            print(result_msg)
+            
+            return products
+            
+        except Exception as e:
+            print(f"✗ Smoke test failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -226,14 +353,21 @@ class CataloguePage(QWidget):
         layout.addWidget(self.table)
 
     def _load_products(self):
-        self.all_products = self.database.load()
-
-        if not self.all_products:
-            QMessageBox.warning(
-                self,
-                "Catalogue File Missing",
-                "Could not load catalogue data.\\n\\nRun the build pipeline first.",
-            )
+        # SMOKE TEST: Use MasterProductService if TEST_MODE enabled
+        if TEST_MODE_USE_MASTER_PRODUCTS:
+            self.all_products = self._load_from_master_products()
+            # In TEST_MODE, don't show error if no products - database may not be populated yet
+            if not self.all_products:
+                print("⚠ Warning: Smoke test loaded 0 products (database may be empty)")
+        else:
+            self.all_products = self.database.load()
+            # In normal mode, show error if no products
+            if not self.all_products:
+                QMessageBox.warning(
+                    self,
+                    "Catalogue File Missing",
+                    "Could not load catalogue data.\n\nRun the build pipeline first.",
+                )
 
         self._populate_supplier_filter()
         self._populate_brand_filter()
@@ -276,8 +410,36 @@ class CataloguePage(QWidget):
         )
         self.brand_filter.blockSignals(False)
 
+    def _search_products(self, query):
+        """Search products by query string.
+        
+        Works with both TEST_MODE (MasterProductService) and normal mode (CSV).
+        Searches SKU, title, brand, supplier, and category.
+        """
+        query = query.strip().lower()
+        
+        if not query:
+            return self.all_products
+        
+        results = []
+        for product in self.all_products:
+            raw_text = " ".join(str(value or "") for value in product.raw.values())
+            searchable = " ".join([
+                product.sku,
+                product.title,
+                product.brand,
+                product.supplier,
+                product.category,
+                raw_text,
+            ]).lower()
+            
+            if query in searchable:
+                results.append(product)
+        
+        return results
+
     def _apply_filter(self):
-        products = self.database.search(self.search_input.text())
+        products = self._search_products(self.search_input.text())
 
         sup = self.supplier_filter.currentText()
         br = self.brand_filter.currentText()
