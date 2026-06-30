@@ -8,7 +8,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QTableWidget,
     QTableWidgetItem,
+    QComboBox,
 )
+from pathlib import Path
+from datetime import datetime
 
 from widgets import (
     PageTitle,
@@ -24,6 +27,9 @@ class SupplierCentrePage(QWidget):
     def __init__(self):
         super().__init__()
         self.supplier_statuses = []
+        self.selected_file_path = None
+        self.supplier_selector = None
+        self.selected_file_info_label = None
         self.build_ui()
         self.refresh_supplier_statuses()
 
@@ -45,15 +51,38 @@ class SupplierCentrePage(QWidget):
         suppliers_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
         layout.addWidget(suppliers_title)
 
-        # Suppliers table header layout
-        table_header = QHBoxLayout()
-        table_header.setSpacing(10)
+        # Supplier selector
+        selector_layout = QHBoxLayout()
+        selector_layout.setSpacing(10)
+        
+        selector_label = QLabel("Select Supplier:")
+        selector_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
+        selector_layout.addWidget(selector_label)
+        
+        self.supplier_selector = QComboBox()
+        self.supplier_selector.setStyleSheet("""
+            QComboBox {
+                background-color: #1F2937;
+                color: #F9FAFB;
+                border: 1px solid #374151;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                image: none;
+            }
+        """)
+        self.supplier_selector.setMinimumWidth(200)
+        selector_layout.addWidget(self.supplier_selector)
         
         self.refresh_button = SecondaryButton("Refresh")
         self.refresh_button.clicked.connect(self.refresh_supplier_statuses)
-        table_header.addStretch()
-        table_header.addWidget(self.refresh_button)
-        layout.addLayout(table_header)
+        selector_layout.addStretch()
+        selector_layout.addWidget(self.refresh_button)
+        layout.addLayout(selector_layout)
 
         # Suppliers table
         self.suppliers_table = QTableWidget()
@@ -88,13 +117,23 @@ class SupplierCentrePage(QWidget):
         self.suppliers_table.setMinimumHeight(300)
         layout.addWidget(self.suppliers_table)
 
-        # Action Buttons Section (disabled for now)
+        # Selected File Section
+        file_title = QLabel("Selected File")
+        file_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
+        layout.addWidget(file_title)
+
+        self.selected_file_info_label = QLabel("No file selected")
+        self.selected_file_info_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
+        self.selected_file_info_label.setWordWrap(True)
+        layout.addWidget(self.selected_file_info_label)
+
+        # Action Buttons Section
         buttons_title = QLabel("Actions")
         buttons_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
         layout.addWidget(buttons_title)
 
         self.browse_button = SecondaryButton("Browse CSV")
-        self.browse_button.setEnabled(False)
+        self.browse_button.setEnabled(True)
         self.browse_button.clicked.connect(self.on_browse_csv)
         layout.addWidget(self.browse_button)
 
@@ -114,6 +153,7 @@ class SupplierCentrePage(QWidget):
         """Refresh the supplier statuses from the loader."""
         self.supplier_statuses = discover_plugin_statuses()
         self.populate_suppliers_table()
+        self.populate_supplier_selector()
 
     def populate_suppliers_table(self):
         """Populate the suppliers table with current statuses."""
@@ -175,9 +215,63 @@ class SupplierCentrePage(QWidget):
         else:
             return QColor("#9CA3AF")  # Gray
 
+    def populate_supplier_selector(self):
+        """Populate the supplier selector dropdown."""
+        self.supplier_selector.clear()
+        for status in self.supplier_statuses:
+            self.supplier_selector.addItem(status.supplier_name)
+
     def on_browse_csv(self):
-        """Handler for Browse CSV button (disabled for now)."""
-        pass
+        """Handler for Browse CSV button - opens file dialog."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select CSV File",
+            "",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        
+        if file_path:
+            self.selected_file_path = file_path
+            self.update_file_info_display()
+            # Enable Validate button after file selection
+            self.validate_button.setEnabled(True)
+
+    def update_file_info_display(self):
+        """Update the display of selected file information."""
+        if not self.selected_file_path:
+            self.selected_file_info_label.setText("No file selected")
+            return
+        
+        file_path = Path(self.selected_file_path)
+        
+        if not file_path.exists():
+            self.selected_file_info_label.setText(f"File not found: {self.selected_file_path}")
+            return
+        
+        # Get file metadata
+        file_stats = file_path.stat()
+        file_size_bytes = file_stats.st_size
+        file_mtime = file_stats.st_mtime
+        
+        # Format file size
+        if file_size_bytes > 1024 * 1024:
+            size_text = f"{file_size_bytes / (1024 * 1024):.2f} MB"
+        elif file_size_bytes > 1024:
+            size_text = f"{file_size_bytes / 1024:.2f} KB"
+        else:
+            size_text = f"{file_size_bytes} bytes"
+        
+        # Format last modified
+        last_modified = datetime.fromtimestamp(file_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Display info
+        info_text = f"""Selected File:  {file_path.name}
+Path:  {file_path}
+File Size:  {size_text}
+Last Modified:  {last_modified}"""
+        
+        self.selected_file_info_label.setText(info_text)
+        self.selected_file_info_label.setStyleSheet("color:#10B981; font-size:13px;")
 
     def on_validate_file(self):
         """Handler for Validate File button (disabled for now)."""
