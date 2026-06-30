@@ -20,6 +20,7 @@ from widgets import (
     SecondaryButton,
 )
 from dpe_v3.supplier_plugins.loader import discover_plugin_statuses
+from core.product.supplier_import_service import SupplierImportService
 
 
 class SupplierCentrePage(QWidget):
@@ -30,6 +31,7 @@ class SupplierCentrePage(QWidget):
         self.selected_file_path = None
         self.supplier_selector = None
         self.selected_file_info_label = None
+        self.validation_result_label = None
         self.build_ui()
         self.refresh_supplier_statuses()
 
@@ -125,7 +127,16 @@ class SupplierCentrePage(QWidget):
         self.selected_file_info_label = QLabel("No file selected")
         self.selected_file_info_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
         self.selected_file_info_label.setWordWrap(True)
+        self.selected_file_info_label.setMaximumHeight(100)
         layout.addWidget(self.selected_file_info_label)
+
+        # Validation Result Section
+        self.validation_result_label = QLabel("")
+        self.validation_result_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
+        self.validation_result_label.setWordWrap(True)
+        self.validation_result_label.setMaximumHeight(150)
+        self.validation_result_label.hide()
+        layout.addWidget(self.validation_result_label)
 
         # Action Buttons Section
         buttons_title = QLabel("Actions")
@@ -221,6 +232,19 @@ class SupplierCentrePage(QWidget):
         for status in self.supplier_statuses:
             self.supplier_selector.addItem(status.supplier_name)
 
+    def _format_display_path(self, file_path: str, max_chars: int = 70) -> str:
+        """Format file path for display with ellipsis if too long."""
+        if len(file_path) <= max_chars:
+            return file_path
+        
+        # Show last parts of path with ellipsis
+        path_parts = file_path.replace("\\", "/").split("/")
+        # Try to show at least the filename and one parent directory
+        display_path = "/".join(path_parts[-2:])  # e.g., "A1/A1 pricefile.csv"
+        if len(display_path) < len(file_path):
+            display_path = "..." + display_path
+        return display_path
+
     def on_browse_csv(self):
         """Handler for Browse CSV button - opens file dialog."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -264,9 +288,10 @@ class SupplierCentrePage(QWidget):
         # Format last modified
         last_modified = datetime.fromtimestamp(file_mtime).strftime("%Y-%m-%d %H:%M:%S")
         
-        # Display info
+        # Display info with formatted path
+        formatted_path = self._format_display_path(str(file_path))
         info_text = f"""Selected File:  {file_path.name}
-Path:  {file_path}
+Path:  {formatted_path}
 File Size:  {size_text}
 Last Modified:  {last_modified}"""
         
@@ -274,9 +299,75 @@ Last Modified:  {last_modified}"""
         self.selected_file_info_label.setStyleSheet("color:#10B981; font-size:13px;")
 
     def on_validate_file(self):
-        """Handler for Validate File button (disabled for now)."""
-        pass
+        """Handler for Validate File button - validates the selected file against selected supplier."""
+        if not self.selected_file_path:
+            self.validation_result_label.setText("❌ No file selected")
+            self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
+            self.validation_result_label.show()
+            self.import_button.setEnabled(False)
+            return
+        
+        # Get selected supplier name from dropdown
+        selected_supplier_name = self.supplier_selector.currentText()
+        
+        # Find the supplier status for this supplier to get expected file path
+        expected_file_path = None
+        for status in self.supplier_statuses:
+            if status.supplier_name == selected_supplier_name:
+                expected_file_path = status.input_file
+                break
+        
+        # Validate the file with folder matching
+        result = SupplierImportService.validate_selected_file(
+            self.selected_file_path,
+            selected_supplier_name,
+            expected_file_path=expected_file_path
+        )
+        
+        # Display validation result with selected supplier information
+        if result.valid:
+            result_text = f"""✓ Validation Successful
+Selected Supplier:  {selected_supplier_name}
+File:  {Path(result.file_path).name}
+Encoding:  {result.encoding}
+Rows:  {result.row_count}
+File Size:  {self._format_file_size(result.file_size_bytes)}"""
+            self.validation_result_label.setStyleSheet("color:#10B981; font-size:13px;")
+            self.import_button.setEnabled(True)
+        else:
+            # Format error message to fit width
+            error_msg = result.error_message or "Unknown error"
+            # Shorten long paths in error messages
+            if "Expected:" in error_msg:
+                error_msg = error_msg.replace("\\", "/")
+                # Extract just the supplier folder name from the path
+                parts = error_msg.split("/")
+                if len(parts) > 1:
+                    expected_folder = parts[-1]  # e.g., "A1"
+                    got_folder = "Got:"
+                    if "Got:" in error_msg:
+                        got_part = error_msg.split("Got:")[1].strip()
+                        error_msg = f"Selected file is not in the configured folder for {selected_supplier_name}. Expected: .../{expected_folder}, Got: {got_part}"
+            
+            result_text = f"""❌ Validation Failed
+Selected Supplier:  {selected_supplier_name}
+Selected File:  {Path(result.file_path).name}
+Error:  {error_msg}"""
+            self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
+            self.import_button.setEnabled(False)
+        
+        self.validation_result_label.setText(result_text)
+        self.validation_result_label.show()
+
+    def _format_file_size(self, size_bytes: int) -> str:
+        """Format file size in human-readable format."""
+        if size_bytes > 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.2f} MB"
+        elif size_bytes > 1024:
+            return f"{size_bytes / 1024:.2f} KB"
+        else:
+            return f"{size_bytes} bytes"
 
     def on_import_file(self):
-        """Handler for Import Supplier File button (disabled for now)."""
+        """Handler for Import Supplier File button (placeholder)."""
         pass
