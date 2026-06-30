@@ -427,13 +427,16 @@ class MasterProductService:
                         stock = 1
                     
                     cur.execute("""
-                        INSERT INTO supplier_products (
+                        INSERT OR IGNORE INTO supplier_products (
                             master_product_id, supplier_id, supplier_sku,
                             supplier_cost, supplier_rrp, supplier_stock,
                             is_active, created_at
                         ) VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
                     """, (master_id, supplier_id, supplier_sku, cost, rrp, stock))
                     
+                    # Track this insertion so in-run duplicates are caught by
+                    # the set check on the next iteration, not by the DB constraint
+                    existing_relationships.add(relationship_key)
                     stats['supplier_products_added'] += 1
             
             conn.commit()

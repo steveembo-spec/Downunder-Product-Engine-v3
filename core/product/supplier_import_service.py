@@ -1,18 +1,19 @@
 """
 DPE v4.0 Supplier Import Service
 
-Service layer for validating and preparing supplier CSV files for import.
-Handles validation without database modifications or data imports.
+Service layer for validating and installing supplier CSV files.
+Handles validation, archiving and safe file replacement.
 
 Architecture:
 - No database writes
-- No file copies or replacements
 - No supplier plugin execution
-- Pure validation and metadata collection
+- File copy/archive only on explicit install_validated_file call
 """
 
 import csv
+import shutil
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -28,6 +29,18 @@ class ValidationResult:
     row_count: int
     encoding: str
     expected_file_path: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+@dataclass
+class ImportResult:
+    """Result of a supplier file install operation."""
+    success: bool
+    supplier_name: str
+    source_file: str
+    destination_file: str
+    dry_run: bool = True
+    archived_file: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -132,10 +145,114 @@ class SupplierImportService:
         return result
     
     @staticmethod
+    def install_validated_file(
+        file_path: str,
+        supplier_name: str,
+        dry_run: bool = True,
+    ) -> "ImportResult":
+        """
+        Validate and optionally install a supplier CSV file.
+
+        When dry_run=True (default):
+            Validates the file, determines destination and archive paths,
+            and returns an ImportResult describing what WOULD happen.
+            No files are created, copied, or replaced.
+
+        When dry_run=False:
+            Performs the full archive + copy operation.
+
+        Args:
+            file_path: Path to the source CSV selected by the user.
+            supplier_name: Supplier name to look up the destination.
+            dry_run: If True, preview only - no file operations performed.
+
+        Returns:
+            ImportResult describing the outcome or preview.
+        """
+        destination = SupplierImportService._get_supplier_file_path(supplier_name)
+
+        base_result = ImportResult(
+            success=False,
+            supplier_name=supplier_name,
+            source_file=file_path,
+            destination_file=destination or "",
+            dry_run=dry_run,
+        )
+
+        # Re-validate first (always, regardless of dry_run)
+        validation = SupplierImportService.validate_selected_file(file_path, supplier_name)
+        if not validation.valid:
+            base_result.error_message = f"Re-validation failed: {validation.error_message}"
+            return base_result
+
+        if not destination:
+            base_result.error_message = (
+                f"No configured input file found for supplier '{supplier_name}'"
+            )
+            return base_result
+
+        dest_path = Path(destination)
+        source_path = Path(file_path)
+
+        # Determine the archive path (used in both dry-run and live modes)
+        archived_file: Optional[str] = None
+        if dest_path.exists():
+            archive_dir = dest_path.parent / "_archive"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            archive_name = f"{dest_path.stem}_{timestamp}{dest_path.suffix}"
+            archive_path = archive_dir / archive_name
+            archived_file = str(archive_path)
+
+        if dry_run:
+            # Preview only - no folders created, no files copied or replaced
+            return ImportResult(
+                success=True,
+                supplier_name=supplier_name,
+                source_file=str(source_path),
+                destination_file=str(dest_path),
+                dry_run=True,
+                archived_file=archived_file,
+            )
+
+        # --- Live import (dry_run=False) ---
+
+        # Create archive folder and archive existing destination file
+        if archived_file:
+            try:
+                archive_dir.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                base_result.error_message = f"Cannot create archive folder: {e}"
+                return base_result
+
+            try:
+                shutil.copy2(dest_path, archive_path)
+            except Exception as e:
+                base_result.error_message = f"Cannot archive existing file: {e}"
+                return base_result
+
+        # Copy source to destination (skip if source and destination are the same file)
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            if source_path.resolve() != dest_path.resolve():
+                shutil.copy2(source_path, dest_path)
+        except Exception as e:
+            base_result.error_message = f"Cannot copy file to destination: {e}"
+            return base_result
+
+        return ImportResult(
+            success=True,
+            supplier_name=supplier_name,
+            source_file=str(source_path),
+            destination_file=str(dest_path),
+            dry_run=False,
+            archived_file=archived_file,
+        )
+
+    @staticmethod
     def _get_supplier_file_path(supplier_name: str) -> Optional[str]:
         """
         Get the configured file path for a supplier by name.
-        
+
         Args:
             supplier_name: Name of the supplier to look up
             

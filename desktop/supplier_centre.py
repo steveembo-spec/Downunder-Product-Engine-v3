@@ -4,7 +4,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QFrame,
     QFileDialog,
     QTableWidget,
     QTableWidgetItem,
@@ -22,6 +21,7 @@ from widgets import (
 )
 from dpe_v3.supplier_plugins.loader import discover_plugin_statuses
 from core.product.supplier_import_service import SupplierImportService
+from core.product.master_product_service import MasterProductService
 
 
 class SupplierCentrePage(QWidget):
@@ -46,7 +46,8 @@ class SupplierCentrePage(QWidget):
         # Header (fixed at top, not scrollable)
         main_layout.addWidget(PageTitle("Supplier Centre"))
         main_layout.addWidget(PageSubtitle(
-            "Import and validate supplier catalogue files before synchronising the Master Product Database."
+            "Import supplier catalogue files and synchronise the Master Product Database. "
+            "Only suppliers with a configured supplier plugin can be imported."
         ))
 
         # Scrollable content area
@@ -85,9 +86,14 @@ class SupplierCentrePage(QWidget):
         scroll_layout.setSpacing(24)
 
         # Configured Suppliers Section
-        suppliers_title = QLabel("Configured Suppliers")
+        suppliers_title = QLabel("Configured Supplier Plugins")
         suppliers_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
         scroll_layout.addWidget(suppliers_title)
+
+        plugin_note = QLabel("Only configured suppliers with a supplier plugin can be imported.")
+        plugin_note.setStyleSheet("color:#9CA3AF; font-size:12px; font-style:italic;")
+        plugin_note.setWordWrap(True)
+        scroll_layout.addWidget(plugin_note)
 
         # Supplier selector
         selector_layout = QHBoxLayout()
@@ -166,11 +172,11 @@ class SupplierCentrePage(QWidget):
         self.selected_file_info_label.setMaximumHeight(100)
         scroll_layout.addWidget(self.selected_file_info_label)
 
-        # Validation Result Section
+        # Validation / Status Section
         self.validation_result_label = QLabel("")
         self.validation_result_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
         self.validation_result_label.setWordWrap(True)
-        self.validation_result_label.setMaximumHeight(150)
+        self.validation_result_label.setMaximumHeight(350)
         self.validation_result_label.hide()
         scroll_layout.addWidget(self.validation_result_label)
 
@@ -217,13 +223,13 @@ class SupplierCentrePage(QWidget):
             self.suppliers_table.setItem(row, 0, name_item)
 
             # Enabled
-            enabled_text = "✓ Yes" if status.enabled else "✗ No"
+            enabled_text = "Yes" if status.enabled else "No"
             enabled_item = QTableWidgetItem(enabled_text)
             enabled_item.setForeground(self._get_color_for_status(status.enabled))
             self.suppliers_table.setItem(row, 1, enabled_item)
 
             # File Exists
-            file_exists_text = "✓ Yes" if status.file_exists else "✗ No"
+            file_exists_text = "Yes" if status.file_exists else "No"
             file_exists_item = QTableWidgetItem(file_exists_text)
             file_exists_item.setForeground(self._get_color_for_status(status.file_exists))
             self.suppliers_table.setItem(row, 2, file_exists_item)
@@ -333,57 +339,77 @@ Last Modified:  {last_modified}"""
         self.selected_file_info_label.setStyleSheet("color:#10B981; font-size:13px;")
 
     def on_validate_file(self):
-        """Handler for Validate File button - validates the selected file against selected supplier."""
+        """Validate file and display a full validation summary including destination and archive paths."""
         if not self.selected_file_path:
-            self.validation_result_label.setText("❌ No file selected")
+            self.validation_result_label.setText("ERROR: No file selected")
             self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
             self.validation_result_label.show()
             self.import_button.setEnabled(False)
             return
-        
-        # Get selected supplier name from dropdown
+
         selected_supplier_name = self.supplier_selector.currentText()
-        
-        # Validate the file - service discovers supplier path internally
+
+        # Step 1: validate the file
         result = SupplierImportService.validate_selected_file(
             self.selected_file_path,
-            selected_supplier_name
+            selected_supplier_name,
         )
-        
-        # Display validation result with selected supplier information
-        if result.valid:
-            result_text = f"""✓ Validation Successful
-Selected Supplier:  {selected_supplier_name}
-File:  {Path(result.file_path).name}
-Encoding:  {result.encoding}
-Rows:  {result.row_count}
-File Size:  {self._format_file_size(result.file_size_bytes)}"""
-            self.validation_result_label.setStyleSheet("color:#10B981; font-size:13px;")
-            self.import_button.setEnabled(True)
-        else:
-            # Format error message to fit width
+
+        if not result.valid:
             error_msg = result.error_message or "Unknown error"
-            # Shorten long paths in error messages
             if "Expected:" in error_msg:
                 error_msg = error_msg.replace("\\", "/")
-                # Extract just the supplier folder name from the path
                 parts = error_msg.split("/")
-                if len(parts) > 1:
-                    expected_folder = parts[-1]  # e.g., "A1"
-                    got_folder = "Got:"
-                    if "Got:" in error_msg:
-                        got_part = error_msg.split("Got:")[1].strip()
-                        error_msg = f"Selected file is not in the configured folder for {selected_supplier_name}. Expected: .../{expected_folder}, Got: {got_part}"
-            
-            result_text = f"""❌ Validation Failed
-Selected Supplier:  {selected_supplier_name}
-Selected File:  {Path(result.file_path).name}
-Error:  {error_msg}"""
+                if len(parts) > 1 and "Got:" in error_msg:
+                    expected_folder = parts[-1]
+                    got_part = error_msg.split("Got:")[1].strip()
+                    error_msg = (
+                        f"File is not in the configured folder for {selected_supplier_name}. "
+                        f"Expected: .../{expected_folder}, Got: {got_part}"
+                    )
+            result_text = (
+                f"ERROR: Validation Failed\n"
+                f"Supplier:       {selected_supplier_name}\n"
+                f"File:           {Path(result.file_path).name}\n"
+                f"Error:          {error_msg}"
+            )
             self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
+            self.validation_result_label.setText(result_text)
+            self.validation_result_label.show()
             self.import_button.setEnabled(False)
-        
+            return
+
+        # Step 2: dry-run install to discover destination and archive paths
+        preview = SupplierImportService.install_validated_file(
+            self.selected_file_path,
+            selected_supplier_name,
+            dry_run=True,
+        )
+
+        dest_name = Path(preview.destination_file).name if preview.destination_file else "(unknown)"
+        dest_short = self._shorten_path(preview.destination_file)
+        archive_short = self._shorten_path(preview.archived_file) if preview.archived_file else "(no existing file to archive)"
+
+        row_count_fmt = f"{result.row_count:,}"
+        size_fmt = self._format_file_size(result.file_size_bytes)
+
+        result_text = (
+            f"SUCCESS: Validation Summary\n"
+            f"\n"
+            f"Supplier:       {selected_supplier_name}\n"
+            f"Selected File:  {Path(result.file_path).name}\n"
+            f"Destination:    {dest_short}\n"
+            f"Archive Target: {archive_short}\n"
+            f"Encoding:       {result.encoding}\n"
+            f"Rows:           {row_count_fmt}\n"
+            f"File Size:      {size_fmt}\n"
+            f"\n"
+            f"Ready to import - click \"Import Supplier File\" to proceed."
+        )
+        self.validation_result_label.setStyleSheet("color:#10B981; font-size:13px;")
         self.validation_result_label.setText(result_text)
         self.validation_result_label.show()
+        self.import_button.setEnabled(True)
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Format file size in human-readable format."""
@@ -394,7 +420,100 @@ Error:  {error_msg}"""
         else:
             return f"{size_bytes} bytes"
 
+    def _shorten_path(self, path_str: str) -> str:
+        """Shorten a path to last two parts with ellipsis to avoid horizontal overflow."""
+        if not path_str:
+            return ""
+        parts = str(path_str).replace("\\", "/").split("/")
+        if len(parts) > 2:
+            return "../" + "/".join(parts[-2:])
+        return path_str
+
     def on_import_file(self):
-        """Handler for Import Supplier File button (placeholder)."""
-        pass
+        """Archive existing supplier CSV, install selected file, sync Master Product Database."""
+        if not self.selected_file_path:
+            self.validation_result_label.setText("ERROR: No file selected for import")
+            self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
+            self.validation_result_label.show()
+            return
+
+        selected_supplier_name = self.supplier_selector.currentText()
+
+        # Step 1: Live import - archive existing file and copy selected file into place
+        self.validation_result_label.setText("IMPORTING: supplier file...")
+        self.validation_result_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
+        self.validation_result_label.show()
+        self.import_button.setEnabled(False)
+
+        import_result = SupplierImportService.install_validated_file(
+            self.selected_file_path,
+            selected_supplier_name,
+            dry_run=False,
+        )
+
+        if not import_result.success:
+            result_text = (
+                f"ERROR: Import Failed\n"
+                f"Supplier:  {import_result.supplier_name}\n"
+                f"Error:     {import_result.error_message}"
+            )
+            self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
+            self.validation_result_label.setText(result_text)
+            self.validation_result_label.show()
+            self.import_button.setEnabled(True)
+            return
+
+        # Step 2: Synchronise Master Product Database via existing pipeline
+        self.validation_result_label.setText("IMPORTING: Synchronising Master Product Database...")
+        self.validation_result_label.show()
+
+        try:
+            service = MasterProductService()
+            sync_stats = service.sync_from_supplier_loader()
+            total_products = service.count_master_products()
+        except Exception as exc:
+            result_text = (
+                f"WARNING: File Imported - Database Sync Failed\n"
+                f"Supplier:   {import_result.supplier_name}\n"
+                f"Installed:  {Path(import_result.destination_file).name}\n"
+                f"Error:      {exc}"
+            )
+            self.validation_result_label.setStyleSheet("color:#F59E0B; font-size:13px;")
+            self.validation_result_label.setText(result_text)
+            self.validation_result_label.show()
+            self.refresh_supplier_statuses()
+            return
+
+        # Step 3: Build completion summary from real stats
+        added = sync_stats.get('master_products_added', 0)
+        skipped = sync_stats.get('master_products_skipped', 0)
+        sp_added = sync_stats.get('supplier_products_added', 0)
+        sp_skipped = sync_stats.get('supplier_products_skipped', 0)
+
+        archive_line = ""
+        if import_result.archived_file:
+            archive_line = f"Archived:                  {Path(import_result.archived_file).name}\n"
+
+        result_text = (
+            f"SUCCESS: Supplier Import Complete\n"
+            f"\n"
+            f"Supplier:                  {import_result.supplier_name}\n"
+            f"Installed:                 {Path(import_result.destination_file).name}\n"
+            f"{archive_line}"
+            f"\n"
+            f"New Master Products:       {added:,}\n"
+            f"Existing (Skipped):        {skipped:,}\n"
+            f"New Supplier Products:     {sp_added:,}\n"
+            f"Existing (Skipped):        {sp_skipped:,}\n"
+            f"Master Products Total:     {total_products:,}\n"
+            f"\n"
+            f"Database Synchronised\n"
+            f"Ready for Build Centre"
+        )
+        self.validation_result_label.setStyleSheet("color:#10B981; font-size:13px;")
+        self.validation_result_label.setText(result_text)
+        self.validation_result_label.show()
+
+        # Step 4: Refresh supplier status table
+        self.refresh_supplier_statuses()
 
