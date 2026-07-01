@@ -24,10 +24,10 @@ from desktop.dialogs.supplier_comparison_dialog import SupplierComparisonDialog
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# SMOKE TEST: Load 10 products from MasterProductService to prove it works
+# SPRINT 7.2: Load products from MasterProductService instead of CSV
 # Set to False to use original CSV ProductDatabase
 TEST_MODE_USE_MASTER_PRODUCTS = True
-TEST_MODE_LIMIT = 10  # Only load first 10 products for smoke test
+TEST_MODE_LIMIT = 1000  # 1000 products for validation, None = all, or set to N to limit
 ALL_SUPPLIERS = "All Suppliers"
 ALL_BRANDS = "All Brands"
 ALL_IMAGES = "All Images"
@@ -186,8 +186,9 @@ class CataloguePage(QWidget):
             
             service = MasterProductService(PROJECT_ROOT)
             
-            # Load only first 10 master products (limit for smoke test)
-            master_products = service.list_master_products(limit=TEST_MODE_LIMIT)
+            # Load master products from database
+            # If TEST_MODE_LIMIT is None, load all; otherwise limit to first N
+            master_products = service.list_master_products() if TEST_MODE_LIMIT is None else service.list_master_products(limit=TEST_MODE_LIMIT)
             
             products = []
             skipped = 0
