@@ -1,6 +1,14 @@
 from pathlib import Path
+import sys
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Detect if running from PyInstaller executable
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    # Running from packaged exe - use project root resolver to find external data
+    from core.paths import get_project_root
+    PROJECT_ROOT = get_project_root(__file__)
+else:
+    # Running in dev mode - use standard calculation
+    PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 INPUT_DIR = PROJECT_ROOT / "input"
 OUTPUT_DIR = PROJECT_ROOT / "output"

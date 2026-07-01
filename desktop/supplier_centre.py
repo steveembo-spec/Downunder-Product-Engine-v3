@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QScrollArea,
 )
+from PySide6.QtGui import QShowEvent
 from pathlib import Path
 from datetime import datetime
 
@@ -35,6 +36,15 @@ class SupplierCentrePage(QWidget):
         self.validation_result_label = None
         self.build_ui()
         self.refresh_supplier_statuses()
+
+    def showEvent(self, event: QShowEvent):
+        """Handle show event to refresh table rendering when page becomes visible."""
+        super().showEvent(event)
+        # Force table to update its viewport when the page becomes visible
+        # This ensures the table is properly rendered in PyInstaller bundled exe
+        if hasattr(self, 'suppliers_table'):
+            self.suppliers_table.viewport().update()
+            self.suppliers_table.update()
 
     def build_ui(self):
         """Build the Supplier Centre UI with scrollable content area."""
@@ -208,54 +218,66 @@ class SupplierCentrePage(QWidget):
 
     def refresh_supplier_statuses(self):
         """Refresh the supplier statuses from the loader."""
-        self.supplier_statuses = discover_plugin_statuses()
-        self.populate_suppliers_table()
-        self.populate_supplier_selector()
+        try:
+            self.supplier_statuses = discover_plugin_statuses()
+            self.populate_suppliers_table()
+            self.populate_supplier_selector()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
 
     def populate_suppliers_table(self):
         """Populate the suppliers table with current statuses."""
         self.suppliers_table.setRowCount(len(self.supplier_statuses))
 
-        for row, status in enumerate(self.supplier_statuses):
-            # Supplier Name
-            name_item = QTableWidgetItem(status.supplier_name)
-            name_item.setForeground(self._get_color_for_status(status.enabled))
-            self.suppliers_table.setItem(row, 0, name_item)
+        try:
+            for row, status in enumerate(self.supplier_statuses):
+                try:
+                    # Supplier Name
+                    name_item = QTableWidgetItem(status.supplier_name)
+                    name_item.setForeground(self._get_color_for_status(status.enabled))
+                    self.suppliers_table.setItem(row, 0, name_item)
 
-            # Enabled
-            enabled_text = "Yes" if status.enabled else "No"
-            enabled_item = QTableWidgetItem(enabled_text)
-            enabled_item.setForeground(self._get_color_for_status(status.enabled))
-            self.suppliers_table.setItem(row, 1, enabled_item)
+                    # Enabled
+                    enabled_text = "Yes" if status.enabled else "No"
+                    enabled_item = QTableWidgetItem(enabled_text)
+                    enabled_item.setForeground(self._get_color_for_status(status.enabled))
+                    self.suppliers_table.setItem(row, 1, enabled_item)
 
-            # File Exists
-            file_exists_text = "Yes" if status.file_exists else "No"
-            file_exists_item = QTableWidgetItem(file_exists_text)
-            file_exists_item.setForeground(self._get_color_for_status(status.file_exists))
-            self.suppliers_table.setItem(row, 2, file_exists_item)
+                    # File Exists
+                    file_exists_text = "Yes" if status.file_exists else "No"
+                    file_exists_item = QTableWidgetItem(file_exists_text)
+                    file_exists_item.setForeground(self._get_color_for_status(status.file_exists))
+                    self.suppliers_table.setItem(row, 2, file_exists_item)
 
-            # File Size
-            if status.file_size_kb > 0:
-                if status.file_size_kb > 1024:
-                    size_text = f"{status.file_size_kb / 1024:.2f} MB"
-                else:
-                    size_text = f"{status.file_size_kb:.2f} KB"
-            else:
-                size_text = "N/A"
-            size_item = QTableWidgetItem(size_text)
-            self.suppliers_table.setItem(row, 3, size_item)
+                    # File Size
+                    if status.file_size_kb > 0:
+                        if status.file_size_kb > 1024:
+                            size_text = f"{status.file_size_kb / 1024:.2f} MB"
+                        else:
+                            size_text = f"{status.file_size_kb:.2f} KB"
+                    else:
+                        size_text = "N/A"
+                    size_item = QTableWidgetItem(size_text)
+                    self.suppliers_table.setItem(row, 3, size_item)
 
-            # Last Modified
-            modified_item = QTableWidgetItem(status.last_modified)
-            self.suppliers_table.setItem(row, 4, modified_item)
+                    # Last Modified
+                    modified_item = QTableWidgetItem(status.last_modified)
+                    self.suppliers_table.setItem(row, 4, modified_item)
 
-            # Status
-            status_item = QTableWidgetItem(status.status)
-            status_item.setForeground(self._get_color_for_status_text(status.status))
-            self.suppliers_table.setItem(row, 5, status_item)
+                    # Status
+                    status_item = QTableWidgetItem(status.status)
+                    status_item.setForeground(self._get_color_for_status_text(status.status))
+                    self.suppliers_table.setItem(row, 5, status_item)
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
 
-        # Resize columns to content
-        self.suppliers_table.resizeColumnsToContents()
+            # Resize columns to content
+            self.suppliers_table.resizeColumnsToContents()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
 
     def _get_color_for_status(self, is_valid: bool):
         """Get color based on boolean status."""

@@ -18,7 +18,8 @@ from typing import Optional, List
 import sys
 
 # Add project root to path for imports
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+from core.paths import get_project_root
+PROJECT_ROOT = get_project_root(__file__)
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from dpe_v3.supplier_plugins.loader import load_all_suppliers

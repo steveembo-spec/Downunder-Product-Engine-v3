@@ -17,12 +17,13 @@ from PySide6.QtWidgets import (
     QApplication,
 )
 
-from core.product_database import ProductDatabase, ProductRecord
+from core.product.product_database import ProductDatabase, ProductRecord
+from core.paths import get_project_root
 from desktop.dialogs.product_detail_dialog import ProductDetailDialog
 from desktop.dialogs.supplier_comparison_dialog import SupplierComparisonDialog
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = get_project_root(__file__)
 
 # SPRINT 7.2: Load products from MasterProductService instead of CSV
 # Set to False to use original CSV ProductDatabase
@@ -221,7 +222,7 @@ class CataloguePage(QWidget):
                             category=master.category or "",
                             image_status="Unknown",
                             description_status=master.description_status or "",
-                            margin="",
+                            margin=ProductDatabase.calculate_margin("", ""),
                             raw={"sku": master.sku, "title": master.title}
                         ))
                     except Exception as e:
@@ -247,7 +248,7 @@ class CataloguePage(QWidget):
                                 category=master.category or "",
                                 image_status="Unknown",
                                 description_status=master.description_status or "",
-                                margin="",
+                                margin=ProductDatabase.calculate_margin(cost, rrp),
                                 raw={"sku": master.sku, "title": master.title}
                             ))
                         except Exception as e:

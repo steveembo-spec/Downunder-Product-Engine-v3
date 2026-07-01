@@ -1,13 +1,9 @@
 from pathlib import Path
 import json
 
+from core.paths import get_data_root
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-
-if PROJECT_ROOT.name == "desktop":
-    PROJECT_ROOT = PROJECT_ROOT.parent
-
-MANIFEST = PROJECT_ROOT / "output" / "build_manifest.json"
+MANIFEST = get_data_root() / "output" / "build_manifest.json"
 
 
 def _load_manifest():

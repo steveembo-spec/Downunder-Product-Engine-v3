@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.paths import get_assets_path
 from dashboard import DashboardPage
 from catalogue import CataloguePage as BuildCentrePage
 from pages.catalogue_page import CataloguePage
@@ -39,7 +40,7 @@ class MainWindow(QMainWindow):
     def _set_window_icon(self):
         """Set window icon from PNG logo. Fails gracefully if file missing."""
         try:
-            logo_path = Path(__file__).resolve().parent.parent / "assets" / "logo.png"
+            logo_path = get_assets_path(__file__) / "logo.png"
             if logo_path.exists():
                 self.setWindowIcon(QIcon(str(logo_path)))
         except Exception:
@@ -83,7 +84,7 @@ class MainWindow(QMainWindow):
         
         # Load PNG logo - transparent, full logo visible
         logo = QLabel()
-        logo_path = Path(__file__).resolve().parent.parent / "assets" / "logo.png"
+        logo_path = get_assets_path(__file__) / "logo.png"
         if logo_path.exists():
             try:
                 pixmap = QPixmap(str(logo_path))
