@@ -33,6 +33,7 @@ ALL_SUPPLIERS = "All Suppliers"
 ALL_BRANDS = "All Brands"
 ALL_IMAGES = "All Images"
 ALL_DESCRIPTIONS = "All Descriptions"
+SUMMARY_UNKNOWN = "—"
 
 
 class ProductTableModel(QAbstractTableModel):
@@ -280,6 +281,8 @@ class CataloguePage(QWidget):
         s.setStyleSheet("color:#666;")
         layout.addWidget(s)
 
+        self._build_products_summary_strip(layout)
+
         sr = QHBoxLayout()
 
         self.search_input = QLineEdit()
@@ -354,6 +357,28 @@ class CataloguePage(QWidget):
 
         layout.addWidget(self.table)
 
+    def _build_products_summary_strip(self, layout):
+        self.summary_stat_labels = {}
+        summary_titles = [
+            "Total Products",
+            "Suppliers",
+            "Brands",
+            "Categories",
+            "Products With Images",
+            "Products With Descriptions",
+        ]
+
+        summary_row = QHBoxLayout()
+        summary_row.setSpacing(16)
+
+        for title in summary_titles:
+            stat_label = QLabel(f"{title}: {SUMMARY_UNKNOWN}")
+            self.summary_stat_labels[title] = stat_label
+            summary_row.addWidget(stat_label)
+
+        summary_row.addStretch()
+        layout.addLayout(summary_row)
+
     def _load_products(self):
         # SMOKE TEST: Use MasterProductService if TEST_MODE enabled
         if TEST_MODE_USE_MASTER_PRODUCTS:
@@ -371,6 +396,8 @@ class CataloguePage(QWidget):
                     "Could not load products data.\n\nRun the build pipeline first.",
                 )
 
+        self._refresh_products_summary()
+
         self._populate_supplier_filter()
         self._populate_brand_filter()
 
@@ -385,6 +412,66 @@ class CataloguePage(QWidget):
         self.description_filter.blockSignals(False)
 
         self._apply_filter()
+
+    def _is_status_present(self, status_value):
+        value = str(status_value or "").strip().lower()
+        if value in ("", "unknown", "n/a", "na"):
+            return None
+        if value in ("missing", "no", "none", "false", "0"):
+            return False
+        return True
+
+    def _format_stat_value(self, value):
+        return f"{value:,}" if isinstance(value, int) else SUMMARY_UNKNOWN
+
+    def _calculate_products_summary_stats(self):
+        products = self.all_products or []
+
+        suppliers = {str(p.supplier or "").strip() for p in products if str(p.supplier or "").strip()}
+        brands = {str(p.brand or "").strip() for p in products if str(p.brand or "").strip()}
+        categories = {str(p.category or "").strip() for p in products if str(p.category or "").strip()}
+
+        per_sku = {}
+        for product in products:
+            sku = str(product.sku or "").strip()
+            if not sku:
+                continue
+
+            if sku not in per_sku:
+                per_sku[sku] = {"image": False, "description": False, "image_known": False, "description_known": False}
+
+            image_present = self._is_status_present(product.image_status)
+            if image_present is not None:
+                per_sku[sku]["image_known"] = True
+                per_sku[sku]["image"] = per_sku[sku]["image"] or image_present
+
+            description_present = self._is_status_present(product.description_status)
+            if description_present is not None:
+                per_sku[sku]["description_known"] = True
+                per_sku[sku]["description"] = per_sku[sku]["description"] or description_present
+
+        total_products = len(per_sku)
+        image_known_any = any(state["image_known"] for state in per_sku.values())
+        description_known_any = any(state["description_known"] for state in per_sku.values())
+
+        products_with_images = sum(1 for state in per_sku.values() if state["image"]) if image_known_any else None
+        products_with_descriptions = (
+            sum(1 for state in per_sku.values() if state["description"]) if description_known_any else None
+        )
+
+        return {
+            "Total Products": total_products,
+            "Suppliers": len(suppliers),
+            "Brands": len(brands),
+            "Categories": len(categories),
+            "Products With Images": products_with_images,
+            "Products With Descriptions": products_with_descriptions,
+        }
+
+    def _refresh_products_summary(self):
+        stats = self._calculate_products_summary_stats()
+        for title, label in self.summary_stat_labels.items():
+            label.setText(f"{title}: {self._format_stat_value(stats.get(title))}")
 
     def _populate_supplier_filter(self):
         """Populate supplier filter from database suppliers table (not just loaded products)."""
