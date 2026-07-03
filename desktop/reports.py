@@ -15,7 +15,7 @@ class ReportsPage(QWidget):
         layout.addWidget(PageTitle("Reports"))
         layout.addWidget(
             PageSubtitle(
-                "Build reports and catalogue health checks will appear here."
+                "Build reports and products health checks will appear here."
             )
         )
 

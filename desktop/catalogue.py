@@ -78,7 +78,7 @@ class BuildThread(QThread):
             if self.process.returncode == 0:
                 self.finished_ok.emit()
             else:
-                self.failed.emit("Catalogue build failed. Check the build log.")
+                self.failed.emit("Products build failed. Check the build log.")
 
         except Exception as e:
             self.failed.emit(str(e))
@@ -116,7 +116,7 @@ class CataloguePage(QWidget):
         layout.setSpacing(20)
 
         layout.addWidget(PageTitle("Build Centre"))
-        layout.addWidget(PageSubtitle("Run the full DPE catalogue pipeline from the desktop."))
+        layout.addWidget(PageSubtitle("Run the full DPE products pipeline from the desktop."))
 
         section_title = QLabel("Supplier & Content Files")
         section_title.setStyleSheet("font-size:18px; font-weight:800;")
@@ -140,7 +140,7 @@ class CataloguePage(QWidget):
 
         build_controls = QHBoxLayout()
 
-        self.build_button = PrimaryButton("BUILD SHOPIFY CATALOGUE")
+        self.build_button = PrimaryButton("BUILD SHOPIFY PRODUCTS")
         self.build_button.clicked.connect(self.build)
 
         self.cancel_button = SecondaryButton("Cancel Build")
@@ -260,7 +260,7 @@ class CataloguePage(QWidget):
         self.build_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.refresh_btn.setEnabled(False)
-        self.step_label.setText("Starting catalogue build...")
+        self.step_label.setText("Starting products build...")
 
         self.worker = BuildThread()
         self.worker.log.connect(self.handle_log)
@@ -285,7 +285,7 @@ class CataloguePage(QWidget):
             self.step_label.setText("Supplier files loaded...")
 
         elif "Unique SKUs" in line:
-            self.step_label.setText("Merging supplier catalogues...")
+            self.step_label.setText("Merging supplier products...")
 
         elif "Business rules" in line:
             self.step_label.setText("Applying pricing and business rules...")
@@ -320,7 +320,7 @@ class CataloguePage(QWidget):
         QMessageBox.information(
             self,
             "Complete",
-            "Shopify catalogue created successfully."
+            "Shopify products created successfully."
         )
 
     def failed(self, message):
@@ -342,7 +342,7 @@ class CataloguePage(QWidget):
         QMessageBox.warning(
             self,
             "Build Cancelled",
-            "The catalogue build was cancelled."
+            "The products build was cancelled."
         )
 
     def stop_build_ui(self):

@@ -272,11 +272,11 @@ class CataloguePage(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        h = QLabel("Catalogue")
+        h = QLabel("Products")
         h.setStyleSheet("font-size:24px;font-weight:bold;")
         layout.addWidget(h)
 
-        s = QLabel("Search all supplier catalogues by SKU, title, brand, supplier or category.")
+        s = QLabel("Search all supplier products by SKU, title, brand, supplier or category.")
         s.setStyleSheet("color:#666;")
         layout.addWidget(s)
 
@@ -286,7 +286,7 @@ class CataloguePage(QWidget):
         self.search_input.setPlaceholderText("Search SKU, partial SKU, brand, title, supplier...")
         self.search_input.textChanged.connect(self._apply_filter)
 
-        self.reload_button = QPushButton("Reload Catalogue")
+        self.reload_button = QPushButton("Reload Products")
         self.reload_button.clicked.connect(self._load_products)
 
         sr.addWidget(self.search_input)
@@ -367,8 +367,8 @@ class CataloguePage(QWidget):
             if not self.all_products:
                 QMessageBox.warning(
                     self,
-                    "Catalogue File Missing",
-                    "Could not load catalogue data.\n\nRun the build pipeline first.",
+                    "Products File Missing",
+                    "Could not load products data.\n\nRun the build pipeline first.",
                 )
 
         self._populate_supplier_filter()

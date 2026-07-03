@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
 
         pages = [
             "🏠  Dashboard",
-            "📦  Catalogue",
+            "📦  Products",
             "🛠  Build Centre",
             "🏭  Supplier Centre",
             "📊  Reports",

@@ -63,7 +63,7 @@ class DashboardPage(QWidget):
         health_col = QVBoxLayout()
         health_col.setSpacing(10)
 
-        health_title = QLabel("Catalogue Health")
+        health_title = QLabel("Products Health")
         health_title.setStyleSheet("font-size:18px; font-weight:800;")
 
         health_col.addWidget(health_title)
@@ -78,7 +78,7 @@ class DashboardPage(QWidget):
         actions_title = QLabel("Quick Actions")
         actions_title.setStyleSheet("font-size:18px; font-weight:800;")
 
-        self.build_button = PrimaryButton("BUILD SHOPIFY CATALOGUE")
+        self.build_button = PrimaryButton("BUILD SHOPIFY PRODUCTS")
         self.open_report = SecondaryButton("Open Build Report")
         self.open_csv = SecondaryButton("Open Shopify CSV")
         self.open_output = SecondaryButton("Open Output Folder")
@@ -172,13 +172,13 @@ class DashboardPage(QWidget):
         if REPORT.exists():
             os.startfile(REPORT)
         else:
-            QMessageBox.warning(self, "Missing Report", "Run a catalogue build first.")
+            QMessageBox.warning(self, "Missing Report", "Run a products build first.")
 
     def open_shopify_csv(self):
         if OUTPUT.exists():
             os.startfile(OUTPUT)
         else:
-            QMessageBox.warning(self, "Missing CSV", "Run a catalogue build first.")
+            QMessageBox.warning(self, "Missing CSV", "Run a products build first.")
 
     def open_output_folder(self):
         os.startfile(PROJECT_ROOT / "output")

@@ -60,7 +60,7 @@ class SupplierCentrePage(QWidget):
         # Header (fixed at top, not scrollable)
         main_layout.addWidget(PageTitle("Supplier Centre"))
         main_layout.addWidget(PageSubtitle(
-            "Import supplier catalogue files to the Master Product Database. "
+            "Import supplier product files to the Master Product Database. "
             "Use configured supplier plugins or import generic suppliers via CSV."
         ))
 
