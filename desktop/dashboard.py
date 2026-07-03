@@ -45,15 +45,15 @@ class DashboardPage(QWidget):
         cards = QHBoxLayout()
         cards.setSpacing(18)
 
-        self.products = StatCard("Products", "0", "Shopify draft rows", "📦")
-        self.images = StatCard("Images", "0", "Matched product images", "🖼")
-        self.descriptions = StatCard("Descriptions", "0", "Real descriptions matched", "📝")
-        self.status = StatCard("Status", "UNKNOWN", "Last catalogue build", "✅")
+        self.products = StatCard("Master Products", "0", "Live DB total", "📦")
+        self.suppliers = StatCard("Suppliers", "0", "Active in master DB", "🏭")
+        self.missing_price = StatCard("Missing Price", "0", "No RRP aggregate", "💲")
+        self.missing_image = StatCard("Missing Image", "0", "No product image", "🖼")
 
         cards.addWidget(self.products)
-        cards.addWidget(self.images)
-        cards.addWidget(self.descriptions)
-        cards.addWidget(self.status)
+        cards.addWidget(self.suppliers)
+        cards.addWidget(self.missing_price)
+        cards.addWidget(self.missing_image)
 
         layout.addLayout(cards)
 
@@ -67,10 +67,9 @@ class DashboardPage(QWidget):
         health_title.setStyleSheet("font-size:18px; font-weight:800;")
 
         health_col.addWidget(health_title)
-        health_col.addWidget(HealthRow("Supplier Files", "Ready", "#22C55E"))
-        health_col.addWidget(HealthRow("Image Library", "Loaded", "#22C55E"))
-        health_col.addWidget(HealthRow("Descriptions", "Needs work", "#F59E0B"))
-        health_col.addWidget(HealthRow("Shopify Output", "Ready", "#22C55E"))
+        self.health_rows = QVBoxLayout()
+        self.health_rows.setSpacing(10)
+        health_col.addLayout(self.health_rows)
         health_col.addStretch()
 
         actions_col = QVBoxLayout()
@@ -111,11 +110,55 @@ class DashboardPage(QWidget):
         stats = load_dashboard()
 
         self.products.set_value(stats["products"])
-        self.images.set_value(stats["images"])
-        self.descriptions.set_value(stats["descriptions"])
-        self.status.set_value(stats["status"])
+        self.suppliers.set_value(stats["suppliers"])
+        self.missing_price.set_value(stats["missing_price"])
+        self.missing_image.set_value(stats["missing_image"])
 
-        self.last_build.setText(f"Last Build: {stats['run_date']}")
+        self._refresh_health_rows(stats)
+        self.last_build.setText(f"Last Sync: {stats['run_date']}  |  Source: {stats['status']}")
+
+    def _refresh_health_rows(self, stats):
+        while self.health_rows.count():
+            item = self.health_rows.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        missing_desc = int(stats.get("missing_description", "0"))
+        desc_colour = "#22C55E" if missing_desc == 0 else "#F59E0B"
+        self.health_rows.addWidget(
+            HealthRow("Missing Description", str(missing_desc), desc_colour)
+        )
+
+        by_supplier = stats.get("products_by_supplier", [])
+        if by_supplier:
+            for row in by_supplier[:3]:
+                self.health_rows.addWidget(
+                    HealthRow(
+                        f"Supplier: {row['supplier_name']}",
+                        f"{row['product_count']:,} products",
+                        "#22C55E",
+                    )
+                )
+        else:
+            self.health_rows.addWidget(
+                HealthRow("Products By Supplier", "No data", "#9CA3AF")
+            )
+
+        latest = stats.get("latest_suppliers", [])
+        if latest:
+            for row in latest[:2]:
+                self.health_rows.addWidget(
+                    HealthRow(
+                        f"Latest Import: {row['supplier_name']}",
+                        f"{row['product_count']:,} products",
+                        "#22C55E",
+                    )
+                )
+        else:
+            self.health_rows.addWidget(
+                HealthRow("Latest Supplier Import", "Unavailable", "#9CA3AF")
+            )
 
     def go_to_catalogue(self):
         parent = self.parent()
