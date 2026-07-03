@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QComboBox,
     QScrollArea,
+    QLineEdit,
+    QDialog,
 )
 from PySide6.QtGui import QShowEvent
 from pathlib import Path
@@ -21,8 +23,8 @@ from widgets import (
     SecondaryButton,
 )
 from dpe_v3.supplier_plugins.loader import discover_plugin_statuses
-from core.product.supplier_import_service import SupplierImportService
-from core.product.master_product_service import MasterProductService
+from core.product.supplier_centre_workflow_service import SupplierCentreWorkflowService
+from dialogs.supplier_mapping_dialog import SupplierMappingDialog
 
 
 class SupplierCentrePage(QWidget):
@@ -32,8 +34,10 @@ class SupplierCentrePage(QWidget):
         self.supplier_statuses = []
         self.selected_file_path = None
         self.supplier_selector = None
+        self.custom_supplier_name_input = None
         self.selected_file_info_label = None
         self.validation_result_label = None
+        self.workflow_service = SupplierCentreWorkflowService()
         self.build_ui()
         self.refresh_supplier_statuses()
 
@@ -56,8 +60,8 @@ class SupplierCentrePage(QWidget):
         # Header (fixed at top, not scrollable)
         main_layout.addWidget(PageTitle("Supplier Centre"))
         main_layout.addWidget(PageSubtitle(
-            "Import supplier catalogue files and synchronise the Master Product Database. "
-            "Only suppliers with a configured supplier plugin can be imported."
+            "Import supplier catalogue files to the Master Product Database. "
+            "Use configured supplier plugins or import generic suppliers via CSV."
         ))
 
         # Scrollable content area
@@ -171,6 +175,39 @@ class SupplierCentrePage(QWidget):
         self.suppliers_table.setMinimumHeight(200)
         scroll_layout.addWidget(self.suppliers_table)
 
+        # Generic/Custom Supplier Section
+        generic_title = QLabel("Generic Supplier (Custom Import)")
+        generic_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
+        scroll_layout.addWidget(generic_title)
+
+        generic_note = QLabel("Import any CSV file as a new supplier without needing a plugin.")
+        generic_note.setStyleSheet("color:#9CA3AF; font-size:12px; font-style:italic;")
+        generic_note.setWordWrap(True)
+        scroll_layout.addWidget(generic_note)
+
+        generic_input_layout = QHBoxLayout()
+        generic_input_layout.setSpacing(10)
+
+        generic_label = QLabel("Supplier Name:")
+        generic_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
+        generic_input_layout.addWidget(generic_label)
+
+        self.custom_supplier_name_input = QLineEdit()
+        self.custom_supplier_name_input.setPlaceholderText("e.g., My Supplier, Test Supplier")
+        self.custom_supplier_name_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #1F2937;
+                color: #F9FAFB;
+                border: 1px solid #374151;
+                border-radius: 4px;
+                padding: 6px;
+            }
+        """)
+        self.custom_supplier_name_input.setMinimumWidth(300)
+        generic_input_layout.addWidget(self.custom_supplier_name_input)
+        generic_input_layout.addStretch()
+        scroll_layout.addLayout(generic_input_layout)
+
         # Selected File Section
         file_title = QLabel("Selected File")
         file_title.setStyleSheet("font-size:16px; font-weight:800; color:#F9FAFB;")
@@ -209,6 +246,11 @@ class SupplierCentrePage(QWidget):
         self.import_button.setEnabled(False)
         self.import_button.clicked.connect(self.on_import_file)
         scroll_layout.addWidget(self.import_button)
+
+        self.export_shopify_button = SecondaryButton("Export Shopify CSV")
+        self.export_shopify_button.setEnabled(True)
+        self.export_shopify_button.clicked.connect(self.on_export_shopify)
+        scroll_layout.addWidget(self.export_shopify_button)
 
         scroll_layout.addStretch()
 
@@ -361,7 +403,7 @@ Last Modified:  {last_modified}"""
         self.selected_file_info_label.setStyleSheet("color:#10B981; font-size:13px;")
 
     def on_validate_file(self):
-        """Validate file and display a full validation summary including destination and archive paths."""
+        """Validate selected file using workflow service."""
         if not self.selected_file_path:
             self.validation_result_label.setText("ERROR: No file selected")
             self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
@@ -369,69 +411,82 @@ Last Modified:  {last_modified}"""
             self.import_button.setEnabled(False)
             return
 
-        selected_supplier_name = self.supplier_selector.currentText()
+        custom_name = self.custom_supplier_name_input.text().strip()
+        supplier_name = custom_name if custom_name else self.supplier_selector.currentText()
 
-        # Step 1: validate the file
-        result = SupplierImportService.validate_selected_file(
-            self.selected_file_path,
-            selected_supplier_name,
-        )
+        result = self.workflow_service.validate_file(supplier_name, self.selected_file_path)
 
-        if not result.valid:
-            error_msg = result.error_message or "Unknown error"
-            if "Expected:" in error_msg:
-                error_msg = error_msg.replace("\\", "/")
-                parts = error_msg.split("/")
-                if len(parts) > 1 and "Got:" in error_msg:
-                    expected_folder = parts[-1]
-                    got_part = error_msg.split("Got:")[1].strip()
-                    error_msg = (
-                        f"File is not in the configured folder for {selected_supplier_name}. "
-                        f"Expected: .../{expected_folder}, Got: {got_part}"
-                    )
-            result_text = (
-                f"ERROR: Validation Failed\n"
-                f"Supplier:       {selected_supplier_name}\n"
-                f"File:           {Path(result.file_path).name}\n"
-                f"Error:          {error_msg}"
+        # Check if mapping confirmation dialog is needed
+        if result.action_type == "confirm_mapping" and result.validation_data:
+            self._show_mapping_confirmation_dialog(
+                supplier_name=result.validation_data.get("supplier_name"),
+                file_path=result.validation_data.get("file_path"),
+                headers=result.validation_data.get("headers", []),
+                detected_mapping=result.validation_data.get("detected_mapping", {}),
             )
-            self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
-            self.validation_result_label.setText(result_text)
-            self.validation_result_label.show()
-            self.import_button.setEnabled(False)
             return
 
-        # Step 2: dry-run install to discover destination and archive paths
-        preview = SupplierImportService.install_validated_file(
-            self.selected_file_path,
-            selected_supplier_name,
-            dry_run=True,
+        # Normal validation result display
+        self.validation_result_label.setText(
+            f"{result.title}\n\n{result.message}"
         )
-
-        dest_name = Path(preview.destination_file).name if preview.destination_file else "(unknown)"
-        dest_short = self._shorten_path(preview.destination_file)
-        archive_short = self._shorten_path(preview.archived_file) if preview.archived_file else "(no existing file to archive)"
-
-        row_count_fmt = f"{result.row_count:,}"
-        size_fmt = self._format_file_size(result.file_size_bytes)
-
-        result_text = (
-            f"SUCCESS: Validation Summary\n"
-            f"\n"
-            f"Supplier:       {selected_supplier_name}\n"
-            f"Selected File:  {Path(result.file_path).name}\n"
-            f"Destination:    {dest_short}\n"
-            f"Archive Target: {archive_short}\n"
-            f"Encoding:       {result.encoding}\n"
-            f"Rows:           {row_count_fmt}\n"
-            f"File Size:      {size_fmt}\n"
-            f"\n"
-            f"Ready to import - click \"Import Supplier File\" to proceed."
-        )
-        self.validation_result_label.setStyleSheet("color:#10B981; font-size:13px;")
-        self.validation_result_label.setText(result_text)
+        self.validation_result_label.setStyleSheet(f"color:{result.status_color}; font-size:13px;")
         self.validation_result_label.show()
-        self.import_button.setEnabled(True)
+        self.import_button.setEnabled(result.success)
+
+    def _show_mapping_confirmation_dialog(
+        self,
+        supplier_name: str,
+        file_path: str,
+        headers: list[str],
+        detected_mapping: dict,
+    ):
+        """Show the mapping confirmation dialog for a supplier."""
+        try:
+            dialog = SupplierMappingDialog(
+                supplier_name=supplier_name,
+                file_name=Path(file_path).name,
+                headers=headers,
+                detected_mapping=detected_mapping,
+                parent=self,
+            )
+
+            # Call exec() once and store the result
+            dialog_result = dialog.exec()
+            
+            if dialog_result == QDialog.Accepted:
+                # User confirmed the mapping
+                confirmed_mapping = dialog.get_confirmed_mapping()
+                remember_mapping = dialog.should_remember()
+
+                # Show import progress
+                self.validation_result_label.setText("IMPORTING: Processing supplier file...")
+                self.validation_result_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
+                self.validation_result_label.show()
+                self.import_button.setEnabled(False)
+
+                # Call workflow service to save profile and import
+                result = self.workflow_service.confirm_mapping_and_import(
+                    supplier_name=supplier_name,
+                    file_path=file_path,
+                    confirmed_mapping=confirmed_mapping,
+                    remember_mapping=remember_mapping,
+                )
+
+                # Display import result
+                self.validation_result_label.setText(
+                    f"{result.title}\n\n{result.message}"
+                )
+                self.validation_result_label.setStyleSheet(f"color:{result.status_color}; font-size:13px;")
+                self.validation_result_label.show()
+
+                # Refresh supplier status table for managed imports
+                if self.workflow_service._is_managed_supplier(supplier_name):
+                    self.refresh_supplier_statuses()
+        except Exception as e:
+            self.validation_result_label.setText(f"ERROR: {type(e).__name__}: {e}")
+            self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
+            self.validation_result_label.show()
 
     def _format_file_size(self, size_bytes: int) -> str:
         """Format file size in human-readable format."""
@@ -452,90 +507,46 @@ Last Modified:  {last_modified}"""
         return path_str
 
     def on_import_file(self):
-        """Archive existing supplier CSV, install selected file, sync Master Product Database."""
+        """Import supplier file using workflow service."""
         if not self.selected_file_path:
             self.validation_result_label.setText("ERROR: No file selected for import")
             self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
             self.validation_result_label.show()
             return
 
-        selected_supplier_name = self.supplier_selector.currentText()
+        custom_name = self.custom_supplier_name_input.text().strip()
+        supplier_name = custom_name if custom_name else self.supplier_selector.currentText()
 
-        # Step 1: Live import - archive existing file and copy selected file into place
-        self.validation_result_label.setText("IMPORTING: supplier file...")
+        self.validation_result_label.setText("IMPORTING: Processing supplier file...")
         self.validation_result_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
         self.validation_result_label.show()
         self.import_button.setEnabled(False)
 
-        import_result = SupplierImportService.install_validated_file(
-            self.selected_file_path,
-            selected_supplier_name,
-            dry_run=False,
+        result = self.workflow_service.import_file(supplier_name, self.selected_file_path)
+
+        # Display result
+        self.validation_result_label.setText(
+            f"{result.title}\n\n{result.message}"
         )
-
-        if not import_result.success:
-            result_text = (
-                f"ERROR: Import Failed\n"
-                f"Supplier:  {import_result.supplier_name}\n"
-                f"Error:     {import_result.error_message}"
-            )
-            self.validation_result_label.setStyleSheet("color:#EF4444; font-size:13px;")
-            self.validation_result_label.setText(result_text)
-            self.validation_result_label.show()
-            self.import_button.setEnabled(True)
-            return
-
-        # Step 2: Synchronise Master Product Database via existing pipeline
-        self.validation_result_label.setText("IMPORTING: Synchronising Master Product Database...")
+        self.validation_result_label.setStyleSheet(f"color:{result.status_color}; font-size:13px;")
         self.validation_result_label.show()
 
-        try:
-            service = MasterProductService()
-            sync_stats = service.sync_from_supplier_loader()
-            total_products = service.count_master_products()
-        except Exception as exc:
-            result_text = (
-                f"WARNING: File Imported - Database Sync Failed\n"
-                f"Supplier:   {import_result.supplier_name}\n"
-                f"Installed:  {Path(import_result.destination_file).name}\n"
-                f"Error:      {exc}"
-            )
-            self.validation_result_label.setStyleSheet("color:#F59E0B; font-size:13px;")
-            self.validation_result_label.setText(result_text)
-            self.validation_result_label.show()
+        # Refresh supplier status table for managed imports
+        if self.workflow_service._is_managed_supplier(supplier_name):
             self.refresh_supplier_statuses()
-            return
 
-        # Step 3: Build completion summary from real stats
-        added = sync_stats.get('master_products_added', 0)
-        skipped = sync_stats.get('master_products_skipped', 0)
-        sp_added = sync_stats.get('supplier_products_added', 0)
-        sp_skipped = sync_stats.get('supplier_products_skipped', 0)
-
-        archive_line = ""
-        if import_result.archived_file:
-            archive_line = f"Archived:                  {Path(import_result.archived_file).name}\n"
-
-        result_text = (
-            f"SUCCESS: Supplier Import Complete\n"
-            f"\n"
-            f"Supplier:                  {import_result.supplier_name}\n"
-            f"Installed:                 {Path(import_result.destination_file).name}\n"
-            f"{archive_line}"
-            f"\n"
-            f"New Master Products:       {added:,}\n"
-            f"Existing (Skipped):        {skipped:,}\n"
-            f"New Supplier Products:     {sp_added:,}\n"
-            f"Existing (Skipped):        {sp_skipped:,}\n"
-            f"Master Products Total:     {total_products:,}\n"
-            f"\n"
-            f"Database Synchronised\n"
-            f"Ready for Build Centre"
-        )
-        self.validation_result_label.setStyleSheet("color:#10B981; font-size:13px;")
-        self.validation_result_label.setText(result_text)
+    def on_export_shopify(self):
+        """Export Master Product Database to Shopify CSV using workflow service."""
+        self.validation_result_label.setText("EXPORTING: Creating Shopify CSV...")
+        self.validation_result_label.setStyleSheet("color:#9CA3AF; font-size:13px;")
         self.validation_result_label.show()
 
-        # Step 4: Refresh supplier status table
-        self.refresh_supplier_statuses()
+        result = self.workflow_service.export_shopify()
+
+        # Display result
+        self.validation_result_label.setText(
+            f"{result.title}\n\n{result.message}"
+        )
+        self.validation_result_label.setStyleSheet(f"color:{result.status_color}; font-size:13px;")
+        self.validation_result_label.show()
 

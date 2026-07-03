@@ -1,0 +1,17 @@
+{
+    "column_mapping": {
+        "cost": "Price",
+        "rrp": "RRP",
+        "sku": "Product Code",
+        "title": "Description"
+    },
+    "delimiter": ",",
+    "encoding": "utf-8-sig",
+    "file_type": "csv",
+    "header_row": 0,
+    "input_file_path": null,
+    "last_verified": "2026-07-03T11:42:23.268168",
+    "plugin_name": null,
+    "supplier_name": "MCS",
+    "supplier_type": "generic"
+}

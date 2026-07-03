@@ -387,8 +387,29 @@ class CataloguePage(QWidget):
         self._apply_filter()
 
     def _populate_supplier_filter(self):
+        """Populate supplier filter from database suppliers table (not just loaded products)."""
         cur = self.supplier_filter.currentText() if self.supplier_filter.count() else ALL_SUPPLIERS
-        vals = sorted({p.supplier.strip() for p in self.all_products if p.supplier and p.supplier.strip()})
+        
+        # Get suppliers from database (includes newly imported suppliers like MCS)
+        vals = set()
+        try:
+            if TEST_MODE_USE_MASTER_PRODUCTS:
+                from core.product.master_product_service import MasterProductService
+                service = MasterProductService(PROJECT_ROOT)
+                conn = service.get_connection()
+                try:
+                    cur_db = conn.cursor()
+                    cur_db.execute("SELECT supplier_name FROM suppliers WHERE is_enabled = 1 ORDER BY supplier_name")
+                    vals = sorted({row[0] for row in cur_db.fetchall() if row[0]})
+                finally:
+                    conn.close()
+            else:
+                # Fall back to extracting from loaded products
+                vals = sorted({p.supplier.strip() for p in self.all_products if p.supplier and p.supplier.strip()})
+        except Exception as e:
+            print(f"⚠ Warning: Could not load suppliers from database: {e}")
+            # Fall back to loaded products
+            vals = sorted({p.supplier.strip() for p in self.all_products if p.supplier and p.supplier.strip()})
 
         self.supplier_filter.blockSignals(True)
         self.supplier_filter.clear()
@@ -400,8 +421,29 @@ class CataloguePage(QWidget):
         self.supplier_filter.blockSignals(False)
 
     def _populate_brand_filter(self):
+        """Populate brand filter from database master_products table (not just loaded products)."""
         cur = self.brand_filter.currentText() if self.brand_filter.count() else ALL_BRANDS
-        vals = sorted({p.brand.strip() for p in self.all_products if p.brand and p.brand.strip()})
+        
+        # Get brands from database (includes newly imported brands)
+        vals = set()
+        try:
+            if TEST_MODE_USE_MASTER_PRODUCTS:
+                from core.product.master_product_service import MasterProductService
+                service = MasterProductService(PROJECT_ROOT)
+                conn = service.get_connection()
+                try:
+                    cur_db = conn.cursor()
+                    cur_db.execute("SELECT DISTINCT brand FROM master_products WHERE brand IS NOT NULL AND brand != '' ORDER BY brand")
+                    vals = sorted({row[0] for row in cur_db.fetchall() if row[0]})
+                finally:
+                    conn.close()
+            else:
+                # Fall back to extracting from loaded products
+                vals = sorted({p.brand.strip() for p in self.all_products if p.brand and p.brand.strip()})
+        except Exception as e:
+            print(f"⚠ Warning: Could not load brands from database: {e}")
+            # Fall back to loaded products
+            vals = sorted({p.brand.strip() for p in self.all_products if p.brand and p.brand.strip()})
 
         self.brand_filter.blockSignals(True)
         self.brand_filter.clear()
@@ -415,14 +457,111 @@ class CataloguePage(QWidget):
     def _search_products(self, query):
         """Search products by query string.
         
-        Works with both TEST_MODE (MasterProductService) and normal mode (CSV).
-        Searches SKU, title, brand, supplier, and category.
+        In TEST_MODE, queries database only for queries >= 2 characters (with result limit).
+        Otherwise, filters the loaded products in memory.
+        
+        Query length policy:
+        - Length 0: Return all loaded products
+        - Length 1: Do not query database; return filtered in-memory results only
+        - Length >= 2: Query database with limit of 500 results
         """
-        query = query.strip().lower()
+        query = query.strip()
         
         if not query:
+            # Empty query: return all loaded products
             return self.all_products
         
+        query_length = len(query)
+        
+        # In TEST_MODE with search query of 2+ characters, search the database directly
+        if TEST_MODE_USE_MASTER_PRODUCTS and query_length >= 2:
+            try:
+                from core.product.master_product_service import MasterProductService
+                
+                service = MasterProductService(PROJECT_ROOT)
+                
+                # Search database for matching master products (limit to 500 to keep UI responsive)
+                matching_masters = service.search_master_products(query, limit=500)
+                
+                if not matching_masters:
+                    return []
+                
+                # Convert master products to ProductRecord format with supplier info
+                products = []
+                
+                # Build supplier name cache
+                conn = service.get_connection()
+                try:
+                    cur = conn.cursor()
+                    cur.execute("SELECT id, supplier_name FROM suppliers")
+                    supplier_map = {row[0]: row[1] for row in cur.fetchall()}
+                finally:
+                    conn.close()
+                
+                def format_currency(value_str):
+                    """Safely convert TEXT value to formatted currency string."""
+                    if not value_str:
+                        return ""
+                    try:
+                        float_value = float(value_str)
+                        if float_value > 0:
+                            return f"${float_value:.2f}"
+                        return ""
+                    except (ValueError, TypeError):
+                        return str(value_str) if value_str else ""
+                
+                # For each matching master product, get supplier variants
+                for master in matching_masters:
+                    supplier_products = service.list_supplier_products_for_sku(master.sku)
+                    
+                    if not supplier_products:
+                        # No suppliers - create default record
+                        products.append(ProductRecord(
+                            sku=master.sku,
+                            title=master.title or "",
+                            supplier="",
+                            cost="",
+                            rrp="",
+                            stock="",
+                            brand=master.brand or "",
+                            category=master.category or "",
+                            image_status="Unknown",
+                            description_status=master.description_status or "",
+                            margin=ProductDatabase.calculate_margin("", ""),
+                            raw={"sku": master.sku, "title": master.title}
+                        ))
+                    else:
+                        # Create one ProductRecord per supplier (flattened)
+                        for sp in supplier_products:
+                            supplier_name = supplier_map.get(sp.supplier_id, "")
+                            cost = format_currency(sp.supplier_cost)
+                            rrp = format_currency(sp.supplier_rrp)
+                            
+                            products.append(ProductRecord(
+                                sku=master.sku,
+                                title=master.title or "",
+                                supplier=supplier_name,
+                                cost=cost,
+                                rrp=rrp,
+                                stock=str(sp.supplier_stock or 0),
+                                brand=master.brand or "",
+                                category=master.category or "",
+                                image_status="Unknown",
+                                description_status=master.description_status or "",
+                                margin=ProductDatabase.calculate_margin(cost, rrp),
+                                raw={"sku": master.sku, "title": master.title}
+                            ))
+                
+                return products
+                
+            except Exception as e:
+                print(f"⚠ Database search failed: {e}")
+                # Fall back to in-memory search
+                pass
+        
+        # Fallback: filter loaded products in memory (case-insensitive)
+        # Used when: not in TEST_MODE, or query is only 1 character, or database search failed
+        query_lower = query.lower()
         results = []
         for product in self.all_products:
             raw_text = " ".join(str(value or "") for value in product.raw.values())
@@ -435,7 +574,7 @@ class CataloguePage(QWidget):
                 raw_text,
             ]).lower()
             
-            if query in searchable:
+            if query_lower in searchable:
                 results.append(product)
         
         return results

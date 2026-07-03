@@ -33,8 +33,8 @@ def get_project_root(caller_file: str) -> Path:
         
     Logic:
         DEV MODE (not sys.frozen):
-            Walk up 3 levels from caller's __file__ to project root
-            Both catalogue_page.py and master_product_service.py are 3 levels deep
+            Walk up from caller's __file__ until we find a directory containing
+            'output', 'config', or 'desktop' directories (markers of project root)
             
         EXE MODE (sys.frozen, portable exe in dist/):
             sys.executable = C:\path\to\dist\Downunder Product Engine.exe
@@ -56,9 +56,34 @@ def get_project_root(caller_file: str) -> Path:
         return potential_project_root
     
     # Development mode
-    # caller_file is __file__ from calling module
-    # desktop/pages/catalogue_page.py → 3 levels to project_root
-    # core/product/master_product_service.py → 3 levels to project_root
+    # Walk up from caller_file until we find a directory with 'output/', 'config/', or 'desktop/'
+    # This handles callers at any depth and works correctly in BACKUP folders
+    current = Path(caller_file).resolve()
+    
+    # If it's a file, start from its parent directory
+    if current.is_file():
+        current = current.parent
+    
+    # Walk up until we find marker directories
+    max_depth = 10  # Prevent infinite loop
+    for _ in range(max_depth):
+        # Check if this directory has the markers of a project root
+        if any([
+            (current / "output").exists(),
+            (current / "config").exists(),
+            (current / "desktop").exists(),
+        ]):
+            return current
+        
+        # Move up one level
+        parent = current.parent
+        if parent == current:
+            # Reached filesystem root without finding project root
+            break
+        current = parent
+    
+    # Fallback: assume 3 levels up (original behavior for backward compatibility)
+    # This might not be correct in all cases, but it's the original assumption
     return Path(caller_file).resolve().parent.parent.parent
 
 

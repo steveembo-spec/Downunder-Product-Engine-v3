@@ -3,12 +3,17 @@ from __future__ import annotations
 import csv
 import io
 import sqlite3
+import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from core.product.universal_supplier_reader import UniversalSupplierReader
 from core.product.header_detection import STATUS_MISSING, REQUIRED_MASTER_FIELDS
+
+# Setup logging for diagnostics
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -119,6 +124,9 @@ class UniversalMasterProductImporter:
             )
         except Exception as exc:
             return self._error(supplier_name, csv_file_path, f"Could not read CSV rows: {exc}")
+        
+        # Log import start
+        logger.info(f"[IMPORT START] Supplier: {supplier_name}, File: {csv_file_path.name}, CSV Row Count: {len(all_rows)}")
 
         # 5. Import rows
         rows_read = 0
@@ -134,10 +142,14 @@ class UniversalMasterProductImporter:
             cur = conn.cursor()
 
             # Pre-fetch existing SKUs for this file to track created vs updated
+            logger.info("[IMPORT] Pre-fetching existing SKUs...")
             cur.execute("SELECT sku FROM master_products")
             existing_skus: set[str] = {row[0] for row in cur.fetchall()}
+            logger.info(f"[IMPORT] Found {len(existing_skus)} existing SKUs")
 
             touched_skus: set[str] = set()
+            batch_size = 1000
+            import_start_time = time.time()
 
             for row_num, row in enumerate(all_rows, start=2):  # 2 = first data row
                 rows_read += 1
@@ -224,6 +236,12 @@ class UniversalMasterProductImporter:
                         existing_skus.add(sku)
                     else:
                         products_updated += 1
+                    
+                    # Progress logging and batch commits every 1000 rows
+                    if rows_read % batch_size == 0:
+                        logger.info(f"[IMPORT PROGRESS] Row {rows_read}/{len(all_rows)}, SKU: {sku}, Imported: {rows_imported}, Created: {products_created}, Updated: {products_updated}")
+                        conn.commit()  # Batch commit to prevent long transaction
+                        logger.info(f"[IMPORT BATCH] Committed {batch_size} rows at position {rows_read}")
 
                 except Exception as exc:
                     rows_skipped += 1
@@ -231,28 +249,77 @@ class UniversalMasterProductImporter:
 
             # 6. Recalculate aggregates for all touched master products
             if touched_skus:
-                placeholders = ",".join("?" * len(touched_skus))
-                cur.execute(
-                    f"""
-                    UPDATE master_products SET
-                        cost_avg       = (SELECT AVG(sp.supplier_cost)  FROM supplier_products sp WHERE sp.master_product_id = master_products.id AND sp.supplier_cost IS NOT NULL),
-                        cost_min       = (SELECT MIN(sp.supplier_cost)  FROM supplier_products sp WHERE sp.master_product_id = master_products.id AND sp.supplier_cost IS NOT NULL),
-                        cost_max       = (SELECT MAX(sp.supplier_cost)  FROM supplier_products sp WHERE sp.master_product_id = master_products.id AND sp.supplier_cost IS NOT NULL),
-                        rrp_avg        = (SELECT AVG(sp.supplier_rrp)   FROM supplier_products sp WHERE sp.master_product_id = master_products.id AND sp.supplier_rrp IS NOT NULL),
-                        rrp_min        = (SELECT MIN(sp.supplier_rrp)   FROM supplier_products sp WHERE sp.master_product_id = master_products.id AND sp.supplier_rrp IS NOT NULL),
-                        rrp_max        = (SELECT MAX(sp.supplier_rrp)   FROM supplier_products sp WHERE sp.master_product_id = master_products.id AND sp.supplier_rrp IS NOT NULL),
-                        stock_total    = (SELECT COALESCE(SUM(sp.supplier_stock), 0) FROM supplier_products sp WHERE sp.master_product_id = master_products.id),
-                        stock_suppliers= (SELECT COUNT(*) FROM supplier_products sp WHERE sp.master_product_id = master_products.id AND sp.is_active = 1),
-                        updated_at     = CURRENT_TIMESTAMP
-                    WHERE sku IN ({placeholders})
-                    """,
-                    list(touched_skus),
+                logger.info(f"[IMPORT AGGREGATES] Starting aggregate recalculation for {len(touched_skus)} touched products...")
+                aggregate_start = time.time()
+                touched_sku_list = sorted(touched_skus)
+                aggregate_chunk_size = 5000
+                aggregate_sql_statements = 0
+                uses_correlated_subqueries = False
+                loops_per_touched_sku = False
+
+                for start_idx in range(0, len(touched_sku_list), aggregate_chunk_size):
+                    sku_batch = touched_sku_list[start_idx:start_idx + aggregate_chunk_size]
+                    placeholders = ",".join("?" * len(sku_batch))
+
+                    cur.execute(
+                        f"""
+                        WITH touched AS (
+                            SELECT id
+                            FROM master_products
+                            WHERE sku IN ({placeholders})
+                        ),
+                        aggregated AS (
+                            SELECT
+                                t.id AS master_id,
+                                AVG(sp.supplier_cost) AS cost_avg,
+                                MIN(sp.supplier_cost) AS cost_min,
+                                MAX(sp.supplier_cost) AS cost_max,
+                                AVG(sp.supplier_rrp) AS rrp_avg,
+                                MIN(sp.supplier_rrp) AS rrp_min,
+                                MAX(sp.supplier_rrp) AS rrp_max,
+                                COALESCE(SUM(sp.supplier_stock), 0) AS stock_total,
+                                COALESCE(SUM(CASE WHEN sp.is_active = 1 THEN 1 ELSE 0 END), 0) AS stock_suppliers
+                            FROM touched t
+                            LEFT JOIN supplier_products sp
+                                ON sp.master_product_id = t.id
+                            GROUP BY t.id
+                        )
+                        UPDATE master_products
+                        SET
+                            cost_avg = aggregated.cost_avg,
+                            cost_min = aggregated.cost_min,
+                            cost_max = aggregated.cost_max,
+                            rrp_avg = aggregated.rrp_avg,
+                            rrp_min = aggregated.rrp_min,
+                            rrp_max = aggregated.rrp_max,
+                            stock_total = aggregated.stock_total,
+                            stock_suppliers = aggregated.stock_suppliers,
+                            updated_at = CURRENT_TIMESTAMP
+                        FROM aggregated
+                        WHERE master_products.id = aggregated.master_id
+                        """,
+                        sku_batch,
+                    )
+                    aggregate_sql_statements += 1
+                
+                aggregate_time = time.time() - aggregate_start
+                logger.info(
+                    "[IMPORT AGGREGATES] Diagnostics: SQL statements=%s, correlated_subqueries=%s, per_sku_loop=%s, chunk_size=%s",
+                    aggregate_sql_statements,
+                    uses_correlated_subqueries,
+                    loops_per_touched_sku,
+                    aggregate_chunk_size,
                 )
+                logger.info(f"[IMPORT AGGREGATES] Completed in {aggregate_time:.2f} seconds")
 
             conn.commit()
+            
+            import_total_time = time.time() - import_start_time
+            logger.info(f"[IMPORT COMPLETE] Total time: {import_total_time:.2f}s, Rows: {rows_read}, Imported: {rows_imported}, Created: {products_created}, Updated: {products_updated}")
 
         except Exception as exc:
             conn.rollback()
+            logger.error(f"[IMPORT ERROR] {exc}", exc_info=True)
             return self._error(supplier_name, csv_file_path, f"Database error: {exc}")
         finally:
             conn.close()

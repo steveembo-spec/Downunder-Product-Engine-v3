@@ -1,0 +1,17 @@
+{
+    "column_mapping": {
+        "cost": "Cost",
+        "rrp": "RRP",
+        "sku": "SKU",
+        "title": "Description"
+    },
+    "delimiter": ",",
+    "encoding": "utf-8-sig",
+    "file_type": "csv",
+    "header_row": 0,
+    "input_file_path": null,
+    "last_verified": "2026-07-03T10:56:20.763619",
+    "plugin_name": null,
+    "supplier_name": "Test Supplier",
+    "supplier_type": "generic"
+}

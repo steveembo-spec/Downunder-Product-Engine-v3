@@ -180,6 +180,56 @@ class MasterProductService:
         finally:
             conn.close()
     
+    def search_master_products(self, query: str, limit: int = 500) -> List[MasterProduct]:
+        """Search master products by SKU, title, brand, or category.
+        
+        Queries the database directly to search across all products.
+        
+        Args:
+            query: Search term (case-insensitive, matches partial strings)
+            limit: Maximum number of results to return (default 500, max 1000)
+            
+        Returns:
+            List of MasterProduct records matching the query (up to limit)
+        """
+        # Cap limit to maximum 1000
+        limit = min(limit, 1000)
+        
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+            # Search in SKU, title, brand, category with LIKE (case-insensitive)
+            search_pattern = f"%{query}%"
+            
+            cur.execute("""
+                SELECT id, sku, title, brand, category, description_status,
+                       created_at, v4_migrated_at
+                FROM master_products
+                WHERE sku LIKE ? 
+                   OR title LIKE ?
+                   OR brand LIKE ?
+                   OR category LIKE ?
+                ORDER BY sku
+                LIMIT ?
+            """, (search_pattern, search_pattern, search_pattern, search_pattern, limit))
+            
+            products = []
+            for row in cur.fetchall():
+                products.append(MasterProduct(
+                    id=row[0],
+                    sku=row[1],
+                    title=row[2],
+                    brand=row[3],
+                    category=row[4],
+                    description_status=row[5],
+                    created_at=row[6],
+                    v4_migrated_at=row[7]
+                ))
+            
+            return products
+        finally:
+            conn.close()
+    
     # ============================================================================
     # Supplier Products Methods
     # ============================================================================
