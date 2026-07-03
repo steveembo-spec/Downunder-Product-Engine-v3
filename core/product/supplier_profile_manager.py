@@ -169,6 +169,7 @@ class SupplierProfileManager:
         header_row: int = 0,
         column_mapping: Optional[dict[str, str]] = None,
         last_verified: str = "",
+        input_file_path: Optional[str] = None,
     ) -> SupplierProfile:
         """
         Create and save a generic supplier profile.
@@ -188,10 +189,113 @@ class SupplierProfileManager:
             last_verified=last_verified,
             supplier_type="generic",
             plugin_name=None,
-            input_file_path=None,
+            input_file_path=input_file_path,
         )
         self.save_profile(profile)
         return profile
+
+    def ensure_default_profiles_exist(self) -> list[str]:
+        """
+        Create baseline default profiles for all primary suppliers if missing.
+        Never overwrites existing profile files.
+
+        Includes:
+        - Managed legacy suppliers: A1, Cassons, Serco
+        - Universal suppliers: MCS, Whites
+
+        Returns a list of supplier names newly created.
+        """
+        _DEFAULT_SUPPLIERS = [
+            {
+                "supplier_name": "A1",
+                "supplier_type": "managed",
+                "plugin_name": "a1",
+                "input_file_path": "input/A1/A1 pricefile.csv",
+                "file_type": "csv",
+                "encoding": "utf-8-sig",
+                "delimiter": ",",
+                "header_row": 0,
+                "column_mapping": {},
+                "last_verified": "",
+            },
+            {
+                "supplier_name": "Cassons",
+                "supplier_type": "managed",
+                "plugin_name": "cassons",
+                "input_file_path": "input/Cassons/Cassons.csv",
+                "file_type": "csv",
+                "encoding": "utf-8-sig",
+                "delimiter": ",",
+                "header_row": 0,
+                "column_mapping": {},
+                "last_verified": "",
+            },
+            {
+                "supplier_name": "Serco",
+                "supplier_type": "managed",
+                "plugin_name": "serco",
+                "input_file_path": "input/Serco/serco.csv",
+                "file_type": "csv",
+                "encoding": "utf-8-sig",
+                "delimiter": ",",
+                "header_row": 0,
+                "column_mapping": {},
+                "last_verified": "",
+            },
+            {
+                "supplier_name": "MCS",
+                "supplier_type": "generic",
+                "plugin_name": None,
+                "input_file_path": "input/MCS/MCS Price List.csv",
+                "file_type": "csv",
+                "encoding": "utf-8-sig",
+                "delimiter": ",",
+                "header_row": 0,
+                "column_mapping": {},
+                "last_verified": "",
+            },
+            {
+                "supplier_name": "Whites",
+                "supplier_type": "generic",
+                "plugin_name": None,
+                "input_file_path": "input/Whites/whites030726.csv",
+                "file_type": "csv",
+                "encoding": "utf-8-sig",
+                "delimiter": ",",
+                "header_row": 0,
+                "column_mapping": {},
+                "last_verified": "",
+            },
+        ]
+
+        created: list[str] = []
+        for entry in _DEFAULT_SUPPLIERS:
+            supplier_name = entry["supplier_name"]
+
+            if self.profile_exists(supplier_name):
+                continue
+
+            if entry["supplier_type"] == "managed":
+                self.create_managed_profile(
+                    supplier_name=supplier_name,
+                    plugin_name=entry["plugin_name"],
+                    input_file_path=entry["input_file_path"],
+                )
+            else:
+                self.create_generic_profile(
+                    supplier_name=supplier_name,
+                    file_type=entry["file_type"],
+                    encoding=entry["encoding"],
+                    delimiter=entry["delimiter"],
+                    header_row=entry["header_row"],
+                    column_mapping=entry["column_mapping"],
+                    last_verified=entry["last_verified"],
+                    input_file_path=entry["input_file_path"],
+                )
+
+            created.append(supplier_name)
+
+        return created
 
     def ensure_managed_profiles_exist(self) -> list[str]:
         """
@@ -199,33 +303,9 @@ class SupplierProfileManager:
         if they do not already exist.  Never overwrites existing profiles.
         Returns a list of supplier names that were newly created.
         """
-        _MANAGED_SUPPLIERS = [
-            {
-                "supplier_name": "A1",
-                "plugin_name": "a1",
-                "input_file_path": "input/A1/A1 pricefile.csv",
-            },
-            {
-                "supplier_name": "Cassons",
-                "plugin_name": "cassons",
-                "input_file_path": "input/Cassons/Cassons.csv",
-            },
-            {
-                "supplier_name": "Serco",
-                "plugin_name": "serco",
-                "input_file_path": "input/Serco/serco.csv",
-            },
-        ]
-        created: list[str] = []
-        for entry in _MANAGED_SUPPLIERS:
-            if not self.profile_exists(entry["supplier_name"]):
-                self.create_managed_profile(
-                    supplier_name=entry["supplier_name"],
-                    plugin_name=entry["plugin_name"],
-                    input_file_path=entry["input_file_path"],
-                )
-                created.append(entry["supplier_name"])
-        return created
+        managed_names = {"A1", "Cassons", "Serco"}
+        created_defaults = self.ensure_default_profiles_exist()
+        return [name for name in created_defaults if name in managed_names]
 
     # ------------------------------------------------------------------
     # Internal validation

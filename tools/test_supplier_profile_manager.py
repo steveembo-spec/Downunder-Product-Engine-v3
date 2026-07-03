@@ -94,29 +94,88 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     manager.delete_profile(MANAGED_NAME)
 
     # ------------------------------------------------------------------ #
-    # 4. ensure_managed_profiles_exist() creates A1/Cassons/Serco         #
+    # 4. ensure_default_profiles_exist() baseline + non-overwrite         #
     # ------------------------------------------------------------------ #
-    created = manager.ensure_managed_profiles_exist()
-    assert set(created) == {"A1", "Cassons", "Serco"},      f"ensure_managed_profiles_exist() created: {created}"
+    # Seed existing profiles to verify bootstrap never overwrites them
+    existing_mcs = SupplierProfile(
+        supplier_name="MCS",
+        file_type="csv",
+        encoding="utf-8-sig",
+        delimiter=",",
+        header_row=0,
+        column_mapping={
+            "sku": "Product Code",
+            "title": "Description",
+            "cost": "Price",
+            "rrp": "RRP",
+        },
+        last_verified="2026-07-03T11:42:23.268168",
+        supplier_type="generic",
+        plugin_name=None,
+        input_file_path="input/MCS/MCS Price List.csv",
+    )
+    existing_whites = SupplierProfile(
+        supplier_name="Whites",
+        file_type="csv",
+        encoding="utf-8-sig",
+        delimiter=",",
+        header_row=0,
+        column_mapping={
+            "sku": "Part Number",
+            "title": "Description",
+            "cost": "Cost",
+            "rrp": "RRP",
+        },
+        last_verified="2026-07-03T14:00:00",
+        supplier_type="generic",
+        plugin_name=None,
+        input_file_path="input/Whites/whites030726.csv",
+    )
+    manager.save_profile(existing_mcs)
+    manager.save_profile(existing_whites)
 
-    for name in ("A1", "Cassons", "Serco"):
+    created = manager.ensure_default_profiles_exist()
+    assert set(created) == {"A1", "Cassons", "Serco"},      f"ensure_default_profiles_exist() created: {created}"
+
+    # Existing MCS/Whites profiles must remain unchanged
+    mcs_after = manager.load_profile("MCS")
+    whites_after = manager.load_profile("Whites")
+    assert mcs_after is not None and mcs_after.column_mapping == existing_mcs.column_mapping, "MCS mapping was overwritten"
+    assert whites_after is not None and whites_after.column_mapping == existing_whites.column_mapping, "Whites mapping was overwritten"
+
+    for name in ("A1", "Cassons", "Serco", "MCS", "Whites"):
         p = manager.load_profile(name)
         assert p is not None,                               f"{name} profile not found after ensure"
-        assert p.supplier_type == "managed",                f"{name}: supplier_type should be 'managed'"
-        assert p.plugin_name is not None,                   f"{name}: plugin_name should not be None"
-        assert p.input_file_path is not None,               f"{name}: input_file_path should not be None"
+        assert p.file_type in ("csv", "xlsx"),            f"{name}: file_type should be set"
+        assert p.encoding != "",                           f"{name}: encoding should be set"
+        assert p.delimiter != "",                          f"{name}: delimiter should be set"
+        assert isinstance(p.header_row, int),               f"{name}: header_row should be int"
+        assert isinstance(p.column_mapping, dict),          f"{name}: column_mapping should be dict"
+        if name in ("A1", "Cassons", "Serco"):
+            assert p.supplier_type == "managed",            f"{name}: supplier_type should be 'managed'"
+            assert p.plugin_name is not None,               f"{name}: plugin_name should not be None"
+        else:
+            assert p.supplier_type == "generic",            f"{name}: supplier_type should be 'generic'"
+            assert p.plugin_name is None,                   f"{name}: plugin_name should be None"
+        assert p.input_file_path is not None,               f"{name}: input_file_path should be set"
 
-    # 5. Calling again must NOT recreate them
-    created_again = manager.ensure_managed_profiles_exist()
+    # 5. Calling again must NOT recreate any defaults
+    created_again = manager.ensure_default_profiles_exist()
     assert created_again == [],                             f"Expected [] on second call, got {created_again}"
 
     # ------------------------------------------------------------------ #
     # 5. create_generic_profile() helper                                  #
     # ------------------------------------------------------------------ #
-    gen2 = manager.create_generic_profile("GenericViaHelper", encoding="cp1252", delimiter=";")
+    gen2 = manager.create_generic_profile(
+        "GenericViaHelper",
+        encoding="cp1252",
+        delimiter=";",
+        input_file_path="input/Generic/generic.csv",
+    )
     assert gen2.supplier_type == "generic",                 f"create_generic_profile: wrong type"
     assert gen2.encoding == "cp1252",                       f"create_generic_profile: encoding mismatch"
     assert gen2.delimiter == ";",                           f"create_generic_profile: delimiter mismatch"
     assert gen2.plugin_name is None,                        f"create_generic_profile: plugin_name should be None"
+    assert gen2.input_file_path == "input/Generic/generic.csv", f"create_generic_profile: input_file_path mismatch"
 
 print("Supplier Profile Manager smoke test passed")
