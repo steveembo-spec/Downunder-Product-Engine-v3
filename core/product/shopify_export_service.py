@@ -8,6 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from dpe_v3.content_engine import default_description, load_legacy_descriptions
+from dpe_v3.image_engine import find_image_for_product, load_image_library
+
 # ---------------------------------------------------------------------------
 # Shopify column spec (order matters – Shopify expects this column order)
 # Matches dpe_v3_shopify_ready.csv format exactly
@@ -58,16 +61,46 @@ class ShopifyExportResult:
 
 _HANDLE_STRIP = re.compile(r"[^\w\s-]")
 _HANDLE_SPACE = re.compile(r"[\s_]+")
+_SKU_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+_SHOPIFY_TAXONOMY_ID = re.compile(r"^[a-z]{1,4}(?:-[0-9]+)+$")
+
+
+def _normalize_handle_part(value: str) -> str:
+    """Normalize text into a Shopify-safe handle segment."""
+    part = (value or "").strip().lower()
+    part = _HANDLE_STRIP.sub("", part)
+    part = _HANDLE_SPACE.sub("-", part)
+    return part.strip("-")
+
+
+def _normalize_sku_part(value: str) -> str:
+    """Normalize SKU into a deterministic, separator-preserving handle segment."""
+    part = (value or "").strip().lower()
+    part = _SKU_NON_ALNUM.sub("-", part)
+    return part.strip("-")
+
+
+def _normalize_shopify_product_category(value: str) -> str:
+    """Return only valid Shopify taxonomy IDs; otherwise blank."""
+    category = (value or "").strip()
+    if not category:
+        return ""
+    return category if _SHOPIFY_TAXONOMY_ID.fullmatch(category.lower()) else ""
 
 
 def _make_handle(title: str, sku: str) -> str:
-    """Generate a URL-safe Shopify handle from title, falling back to SKU."""
-    source = (title or sku or "product").strip()
-    handle = source.lower()
-    handle = _HANDLE_STRIP.sub("", handle)
-    handle = _HANDLE_SPACE.sub("-", handle)
-    handle = handle.strip("-")
-    return handle or sku.lower().strip() or "product"
+    """Generate deterministic Shopify handles as slug(title)-slug(sku)."""
+    base_handle = _normalize_handle_part((title or sku or "product").strip())
+    normalized_sku = _normalize_sku_part(sku)
+
+    # SKU is always present for exported rows; keep a safe fallback for robustness.
+    if not normalized_sku:
+        normalized_sku = "product"
+
+    if not base_handle:
+        base_handle = "product"
+
+    return f"{base_handle}-{normalized_sku}"
 
 # ---------------------------------------------------------------------------
 # Service
@@ -145,7 +178,18 @@ class ShopifyExportService:
             )
 
         try:
-            rows_exported = self._write_csv(output_file, rows)
+            curated_descriptions = load_legacy_descriptions()
+            image_library = load_image_library()
+        except Exception as exc:
+            return ShopifyExportResult(
+                success=False,
+                output_file="",
+                rows_exported=0,
+                error_message=f"Content/image enrichment load failed: {exc}",
+            )
+
+        try:
+            rows_exported = self._write_csv(output_file, rows, curated_descriptions, image_library)
         except Exception as exc:
             return ShopifyExportResult(
                 success=False,
@@ -248,7 +292,12 @@ class ShopifyExportService:
             conn.close()
 
     @staticmethod
-    def _write_csv(output_file: Path, rows: list[dict]) -> int:
+    def _write_csv(
+        output_file: Path,
+        rows: list[dict],
+        curated_descriptions: dict,
+        image_library: dict,
+    ) -> int:
         """Write Shopify CSV. Returns number of product rows written."""
         rows_exported = 0
         with output_file.open("w", newline="", encoding="utf-8") as fh:
@@ -268,10 +317,13 @@ class ShopifyExportService:
                 supplier_name = (row.get("supplier_name") or "").strip()
                 vendor = brand if brand else supplier_name
                 
-                # Category and Type: use category if present, else "General"
-                category = (row.get("category") or "").strip()
-                if not category:
-                    category = "General"
+                # Product Type remains on existing source behavior.
+                product_type = (row.get("category") or "").strip()
+                if not product_type:
+                    product_type = "General"
+
+                # Product Category must only contain valid Shopify taxonomy IDs.
+                product_category = _normalize_shopify_product_category(row.get("category") or "")
                 
                 # Helper to safely convert to float
                 def to_float(val):
@@ -318,9 +370,27 @@ class ShopifyExportService:
                 except (ValueError, TypeError):
                     inventory_qty = 0
                 
-                # Body (HTML) and Image Src: use supplier data if present
-                image_src = (row.get("image_url") or "").strip()
-                body_html = (row.get("description_text") or "").strip()
+                # Description priority:
+                # 1) curated description library
+                # 2) supplier description
+                # 3) default template
+                sku_key = sku.upper()
+                curated_body = (curated_descriptions.get(sku_key) or "").strip()
+                supplier_body = (row.get("description_text") or "").strip()
+                if curated_body:
+                    body_html = curated_body
+                elif supplier_body:
+                    body_html = supplier_body
+                else:
+                    body_html = default_description({"title": title, "brand": brand, "sku": sku})
+
+                # Image priority:
+                # 1) image library
+                # 2) supplier image_url
+                # 3) blank
+                image_src, _ = find_image_for_product({"sku": sku, "title": title}, image_library)
+                if not image_src:
+                    image_src = (row.get("image_url") or "").strip()
                 
                 # Tags: supplier name, brand, category
                 tags = []
@@ -328,8 +398,8 @@ class ShopifyExportService:
                     tags.append(f"supplier:{supplier_name}")
                 if brand:
                     tags.append(f"brand:{brand}")
-                if category and category != "General":
-                    tags.append(f"category:{category}")
+                if product_type and product_type != "General":
+                    tags.append(f"category:{product_type}")
                 tags_str = ", ".join(tags)
 
                 writer.writerow({
@@ -337,8 +407,8 @@ class ShopifyExportService:
                     "Title":                        title,
                     "Body (HTML)":                  body_html,
                     "Vendor":                       vendor,
-                    "Product Category":             category,
-                    "Type":                         category,
+                    "Product Category":             product_category,
+                    "Type":                         product_type,
                     "Tags":                         tags_str,
                     "Published":                    "FALSE",
                     "Option1 Name":                 "Title",
