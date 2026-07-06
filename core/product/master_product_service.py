@@ -13,7 +13,7 @@ Architecture:
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 import sys
 
@@ -59,6 +59,7 @@ class SupplierProduct:
     supplier_cost: Optional[float]
     supplier_rrp: Optional[float]
     supplier_stock: Optional[int]
+    description_text: str
     is_active: int
     created_at: str
 
@@ -252,7 +253,7 @@ class MasterProductService:
             cur.execute("""
                 SELECT sp.id, sp.master_product_id, sp.supplier_id, sp.supplier_sku,
                        sp.supplier_cost, sp.supplier_rrp, sp.supplier_stock,
-                       sp.is_active, sp.created_at
+                       sp.description_text, sp.is_active, sp.created_at
                 FROM supplier_products sp
                 JOIN master_products mp ON sp.master_product_id = mp.id
                 WHERE mp.sku = ?
@@ -269,11 +270,50 @@ class MasterProductService:
                     supplier_cost=row[4],
                     supplier_rrp=row[5],
                     supplier_stock=row[6],
-                    is_active=row[7],
-                    created_at=row[8]
+                    description_text=row[7] or "",
+                    is_active=row[8],
+                    created_at=row[9]
                 ))
             
             return products
+        finally:
+            conn.close()
+
+    def list_all_supplier_products_by_master_id(self) -> Dict[int, List[SupplierProduct]]:
+        """Get all supplier products grouped by master product id.
+
+        Returns:
+            Dictionary keyed by master_product_id containing SupplierProduct records.
+        """
+        conn = self.get_connection()
+        try:
+            cur = conn.cursor()
+
+            cur.execute("""
+                SELECT sp.id, sp.master_product_id, sp.supplier_id, sp.supplier_sku,
+                       sp.supplier_cost, sp.supplier_rrp, sp.supplier_stock,
+                       sp.description_text, sp.is_active, sp.created_at
+                FROM supplier_products sp
+                ORDER BY sp.master_product_id, sp.supplier_id
+            """)
+
+            products_by_master_id: Dict[int, List[SupplierProduct]] = {}
+            for row in cur.fetchall():
+                supplier_product = SupplierProduct(
+                    id=row[0],
+                    master_product_id=row[1],
+                    supplier_id=row[2],
+                    supplier_sku=row[3],
+                    supplier_cost=row[4],
+                    supplier_rrp=row[5],
+                    supplier_stock=row[6],
+                    description_text=row[7] or "",
+                    is_active=row[8],
+                    created_at=row[9],
+                )
+                products_by_master_id.setdefault(supplier_product.master_product_id, []).append(supplier_product)
+
+            return products_by_master_id
         finally:
             conn.close()
     

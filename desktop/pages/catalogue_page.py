@@ -28,7 +28,7 @@ PROJECT_ROOT = get_project_root(__file__)
 # SPRINT 7.2: Load products from MasterProductService instead of CSV
 # Set to False to use original CSV ProductDatabase
 TEST_MODE_USE_MASTER_PRODUCTS = True
-TEST_MODE_LIMIT = 1000  # 1000 products for validation, None = all, or set to N to limit
+TEST_MODE_LIMIT = None  # None = all master products, or set to N to limit during validation
 ALL_SUPPLIERS = "All Suppliers"
 ALL_BRANDS = "All Brands"
 ALL_IMAGES = "All Images"
@@ -147,6 +147,7 @@ class CataloguePage(QWidget):
         self.database = ProductDatabase(PROJECT_ROOT)
         self.all_products = []
         self.filtered_products = []
+        self.searchable_products = []
         self._build_ui()
         self._load_products()
 
@@ -203,11 +204,12 @@ class CataloguePage(QWidget):
                 supplier_map = {row[0]: row[1] for row in cur.fetchall()}
             finally:
                 conn.close()
+
+            supplier_products_by_master_id = service.list_all_supplier_products_by_master_id()
             
             # Convert to ProductRecord format (same as CSV)
             for master in master_products:
-                # Get supplier products for this master SKU
-                supplier_products = service.list_supplier_products_for_sku(master.sku)
+                supplier_products = supplier_products_by_master_id.get(master.id, [])
                 
                 if not supplier_products:
                     # No suppliers - create default record
@@ -224,7 +226,13 @@ class CataloguePage(QWidget):
                             image_status="Unknown",
                             description_status=master.description_status or "",
                             margin=ProductDatabase.calculate_margin("", ""),
-                            raw={"sku": master.sku, "title": master.title}
+                            raw={
+                                "sku": master.sku,
+                                "master_sku": master.sku,
+                                "title": master.title or "",
+                                "brand": master.brand or "",
+                                "category": master.category or "",
+                            }
                         ))
                     except Exception as e:
                         print(f"⚠ Warning: Skipped product {master.sku}: {e}")
@@ -250,7 +258,17 @@ class CataloguePage(QWidget):
                                 image_status="Unknown",
                                 description_status=master.description_status or "",
                                 margin=ProductDatabase.calculate_margin(cost, rrp),
-                                raw={"sku": master.sku, "title": master.title}
+                                raw={
+                                    "sku": master.sku,
+                                    "master_sku": master.sku,
+                                    "supplier_sku": sp.supplier_sku or "",
+                                    "title": master.title or "",
+                                    "brand": master.brand or "",
+                                    "supplier": supplier_name,
+                                    "category": master.category or "",
+                                    "description": sp.description_text or "",
+                                    "description_text": sp.description_text or "",
+                                }
                             ))
                         except Exception as e:
                             print(f"⚠ Warning: Skipped supplier variant for {master.sku}: {e}")
@@ -396,6 +414,7 @@ class CataloguePage(QWidget):
                     "Could not load products data.\n\nRun the build pipeline first.",
                 )
 
+        self._rebuild_searchable_products()
         self._refresh_products_summary()
 
         self._populate_supplier_filter()
@@ -412,6 +431,34 @@ class CataloguePage(QWidget):
         self.description_filter.blockSignals(False)
 
         self._apply_filter()
+
+    def _product_search_blob(self, product):
+        raw = product.raw or {}
+        searchable_values = [
+            product.sku,
+            raw.get("master_sku", ""),
+            raw.get("supplier_sku", ""),
+            product.title,
+            product.brand,
+            product.supplier,
+            product.category,
+            raw.get("barcode", ""),
+            raw.get("description", ""),
+            raw.get("description_text", ""),
+            raw.get("manufacturer_part_number", ""),
+            raw.get("mpn", ""),
+        ]
+
+        if raw:
+            searchable_values.extend(raw.values())
+
+        return " ".join(str(value or "") for value in searchable_values).lower()
+
+    def _rebuild_searchable_products(self):
+        self.searchable_products = [
+            (product, self._product_search_blob(product))
+            for product in self.all_products
+        ]
 
     def _is_status_present(self, status_value):
         value = str(status_value or "").strip().lower()
@@ -543,128 +590,21 @@ class CataloguePage(QWidget):
 
     def _search_products(self, query):
         """Search products by query string.
-        
-        In TEST_MODE, queries database only for queries >= 2 characters (with result limit).
-        Otherwise, filters the loaded products in memory.
-        
-        Query length policy:
-        - Length 0: Return all loaded products
-        - Length 1: Do not query database; return filtered in-memory results only
-        - Length >= 2: Query database with limit of 500 results
+
+        Search runs entirely against the already-loaded in-memory dataset.
+        Matches are case-insensitive and use partial text across supported fields.
         """
         query = query.strip()
-        
+
         if not query:
-            # Empty query: return all loaded products
             return self.all_products
-        
-        query_length = len(query)
-        
-        # In TEST_MODE with search query of 2+ characters, search the database directly
-        if TEST_MODE_USE_MASTER_PRODUCTS and query_length >= 2:
-            try:
-                from core.product.master_product_service import MasterProductService
-                
-                service = MasterProductService(PROJECT_ROOT)
-                
-                # Search database for matching master products (limit to 500 to keep UI responsive)
-                matching_masters = service.search_master_products(query, limit=500)
-                
-                if not matching_masters:
-                    return []
-                
-                # Convert master products to ProductRecord format with supplier info
-                products = []
-                
-                # Build supplier name cache
-                conn = service.get_connection()
-                try:
-                    cur = conn.cursor()
-                    cur.execute("SELECT id, supplier_name FROM suppliers")
-                    supplier_map = {row[0]: row[1] for row in cur.fetchall()}
-                finally:
-                    conn.close()
-                
-                def format_currency(value_str):
-                    """Safely convert TEXT value to formatted currency string."""
-                    if not value_str:
-                        return ""
-                    try:
-                        float_value = float(value_str)
-                        if float_value > 0:
-                            return f"${float_value:.2f}"
-                        return ""
-                    except (ValueError, TypeError):
-                        return str(value_str) if value_str else ""
-                
-                # For each matching master product, get supplier variants
-                for master in matching_masters:
-                    supplier_products = service.list_supplier_products_for_sku(master.sku)
-                    
-                    if not supplier_products:
-                        # No suppliers - create default record
-                        products.append(ProductRecord(
-                            sku=master.sku,
-                            title=master.title or "",
-                            supplier="",
-                            cost="",
-                            rrp="",
-                            stock="",
-                            brand=master.brand or "",
-                            category=master.category or "",
-                            image_status="Unknown",
-                            description_status=master.description_status or "",
-                            margin=ProductDatabase.calculate_margin("", ""),
-                            raw={"sku": master.sku, "title": master.title}
-                        ))
-                    else:
-                        # Create one ProductRecord per supplier (flattened)
-                        for sp in supplier_products:
-                            supplier_name = supplier_map.get(sp.supplier_id, "")
-                            cost = format_currency(sp.supplier_cost)
-                            rrp = format_currency(sp.supplier_rrp)
-                            
-                            products.append(ProductRecord(
-                                sku=master.sku,
-                                title=master.title or "",
-                                supplier=supplier_name,
-                                cost=cost,
-                                rrp=rrp,
-                                stock=str(sp.supplier_stock or 0),
-                                brand=master.brand or "",
-                                category=master.category or "",
-                                image_status="Unknown",
-                                description_status=master.description_status or "",
-                                margin=ProductDatabase.calculate_margin(cost, rrp),
-                                raw={"sku": master.sku, "title": master.title}
-                            ))
-                
-                return products
-                
-            except Exception as e:
-                print(f"⚠ Database search failed: {e}")
-                # Fall back to in-memory search
-                pass
-        
-        # Fallback: filter loaded products in memory (case-insensitive)
-        # Used when: not in TEST_MODE, or query is only 1 character, or database search failed
+
         query_lower = query.lower()
-        results = []
-        for product in self.all_products:
-            raw_text = " ".join(str(value or "") for value in product.raw.values())
-            searchable = " ".join([
-                product.sku,
-                product.title,
-                product.brand,
-                product.supplier,
-                product.category,
-                raw_text,
-            ]).lower()
-            
-            if query_lower in searchable:
-                results.append(product)
-        
-        return results
+        return [
+            product
+            for product, searchable_text in self.searchable_products
+            if query_lower in searchable_text
+        ]
 
     def _apply_filter(self):
         products = self._search_products(self.search_input.text())
