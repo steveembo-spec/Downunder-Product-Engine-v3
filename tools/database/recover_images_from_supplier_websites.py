@@ -14,6 +14,7 @@ Scope and safety:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 import sqlite3
@@ -31,6 +32,30 @@ DB_FILE = PROJECT_ROOT / "output" / "dpe_catalogue.db"
 REQUEST_DELAY_SECONDS = 0.05
 BATCH_SIZE_DEFAULT = 1000
 COMMIT_INTERVAL = 100
+FAILURES_CSV_PATH = PROJECT_ROOT / "output" / "image_recovery_failures.csv"
+
+
+FAILURE_NO_SEARCH_RESULTS = "No search results"
+FAILURE_HTTP_ERROR = "HTTP error"
+FAILURE_SUPPLIER_PAGE_NOT_FOUND = "Supplier page not found"
+FAILURE_MULTIPLE_CANDIDATES = "Multiple candidate products"
+FAILURE_NO_IMAGE_ON_PAGE = "Product page contains no image"
+FAILURE_IMAGE_EXTRACTION_FAILED = "Image extraction failed"
+FAILURE_IMAGE_DOWNLOAD_FAILED = "Image download failed"
+FAILURE_DATABASE_UPDATE_FAILED = "Database update failed"
+FAILURE_OTHER = "Other"
+
+FAILURE_CATEGORIES = [
+    FAILURE_NO_SEARCH_RESULTS,
+    FAILURE_HTTP_ERROR,
+    FAILURE_SUPPLIER_PAGE_NOT_FOUND,
+    FAILURE_MULTIPLE_CANDIDATES,
+    FAILURE_NO_IMAGE_ON_PAGE,
+    FAILURE_IMAGE_EXTRACTION_FAILED,
+    FAILURE_IMAGE_DOWNLOAD_FAILED,
+    FAILURE_DATABASE_UPDATE_FAILED,
+    FAILURE_OTHER,
+]
 
 
 @dataclass(frozen=True)
@@ -44,12 +69,37 @@ class SupplierImageRecoveryReport:
     ambiguous_matches: int
     image_coverage_before: float
     image_coverage_after: float
+    failure_counts: dict[str, int]
+    failures_export_path: str
 
 
 @dataclass(frozen=True)
 class LookupResult:
     status: str  # found | ambiguous | failed
     image_url: str = ""
+    failure_category: str = ""
+    failure_details: str = ""
+
+
+@dataclass(frozen=True)
+class FailureRecord:
+    sku: str
+    brand: str
+    supplier: str
+    failure_category: str
+    failure_details: str
+
+
+def failed_lookup(category: str, details: str) -> LookupResult:
+    return LookupResult(status="failed", failure_category=category, failure_details=details)
+
+
+def ambiguous_lookup(details: str) -> LookupResult:
+    return LookupResult(
+        status="ambiguous",
+        failure_category=FAILURE_MULTIPLE_CANDIDATES,
+        failure_details=details,
+    )
 
 
 def format_duration(seconds: float) -> str:
@@ -173,7 +223,7 @@ def lookup_serco_by_sku_or_title(query: str, exact_code: Optional[str] = None) -
     """
     query = normalize_space(query)
     if not query:
-        return LookupResult(status="failed")
+        return failed_lookup(FAILURE_OTHER, "Empty search query")
 
     try:
         suggestions_raw = post_text(
@@ -185,11 +235,15 @@ def lookup_serco_by_sku_or_title(query: str, exact_code: Optional[str] = None) -
             },
         )
         suggestions = json.loads(suggestions_raw)
-    except (HTTPError, URLError, TimeoutError, ValueError, Exception):
-        return LookupResult(status="failed")
+    except (HTTPError, URLError, TimeoutError) as exc:
+        return failed_lookup(FAILURE_HTTP_ERROR, f"Serco suggestion request failed: {type(exc).__name__}")
+    except ValueError as exc:
+        return failed_lookup(FAILURE_IMAGE_EXTRACTION_FAILED, f"Serco suggestion JSON parse failed: {exc}")
+    except Exception as exc:
+        return failed_lookup(FAILURE_OTHER, f"Serco suggestion request error: {type(exc).__name__}")
 
     if not isinstance(suggestions, list) or not suggestions:
-        return LookupResult(status="failed")
+        return failed_lookup(FAILURE_NO_SEARCH_RESULTS, "Serco suggestion endpoint returned no products")
 
     exact_norm = normalize_code(exact_code) if exact_code else ""
 
@@ -210,9 +264,9 @@ def lookup_serco_by_sku_or_title(query: str, exact_code: Optional[str] = None) -
     # Title fallback must still be strict single candidate.
     candidate_ids = sorted(set(candidate_ids))
     if len(candidate_ids) == 0:
-        return LookupResult(status="failed")
+        return failed_lookup(FAILURE_NO_SEARCH_RESULTS, "No Serco candidate matched query")
     if len(candidate_ids) > 1:
-        return LookupResult(status="ambiguous")
+        return ambiguous_lookup("Multiple Serco candidate IDs matched the query")
 
     try:
         row_html = post_text(
@@ -223,12 +277,14 @@ def lookup_serco_by_sku_or_title(query: str, exact_code: Optional[str] = None) -
                 "Referer": "https://www.serco.com.au/search/express",
             },
         )
-    except (HTTPError, URLError, TimeoutError, Exception):
-        return LookupResult(status="failed")
+    except (HTTPError, URLError, TimeoutError) as exc:
+        return failed_lookup(FAILURE_HTTP_ERROR, f"Serco product row request failed: {type(exc).__name__}")
+    except Exception as exc:
+        return failed_lookup(FAILURE_OTHER, f"Serco product row request error: {type(exc).__name__}")
 
     m = re.search(r'href="([^"]*product[^"]*)"', row_html, re.IGNORECASE)
     if not m:
-        return LookupResult(status="failed")
+        return failed_lookup(FAILURE_SUPPLIER_PAGE_NOT_FOUND, "Serco product URL not found in row response")
 
     product_url = normalize_space(m.group(1))
     if product_url.startswith("/"):
@@ -236,8 +292,10 @@ def lookup_serco_by_sku_or_title(query: str, exact_code: Optional[str] = None) -
 
     try:
         product_html = fetch_text(product_url)
-    except (HTTPError, URLError, TimeoutError, Exception):
-        return LookupResult(status="failed")
+    except (HTTPError, URLError, TimeoutError) as exc:
+        return failed_lookup(FAILURE_HTTP_ERROR, f"Serco product page request failed: {type(exc).__name__}")
+    except Exception as exc:
+        return failed_lookup(FAILURE_OTHER, f"Serco product page request error: {type(exc).__name__}")
 
     # Serco product pages expose primary image via data-zoom-image.
     zooms = re.findall(r'data-zoom-image="([^"]+)"', product_html, re.IGNORECASE)
@@ -255,7 +313,7 @@ def lookup_serco_by_sku_or_title(query: str, exact_code: Optional[str] = None) -
     if og_image:
         return LookupResult(status="found", image_url=og_image)
 
-    return LookupResult(status="failed")
+    return failed_lookup(FAILURE_NO_IMAGE_ON_PAGE, "Serco product page contains no usable image markers")
 
 
 def _parse_cassons_tiles(html_text: str) -> list[dict[str, str]]:
@@ -294,18 +352,20 @@ def _parse_cassons_tiles(html_text: str) -> list[dict[str, str]]:
 def lookup_cassons_by_sku_or_title(query: str, exact_code: Optional[str] = None) -> LookupResult:
     query = normalize_space(query)
     if not query:
-        return LookupResult(status="failed")
+        return failed_lookup(FAILURE_OTHER, "Empty search query")
 
     search_url = f"https://www.cassons.com.au/search?ProductSearch={quote_plus(query)}"
 
     try:
         html_text = fetch_text(search_url)
-    except (HTTPError, URLError, TimeoutError, Exception):
-        return LookupResult(status="failed")
+    except (HTTPError, URLError, TimeoutError) as exc:
+        return failed_lookup(FAILURE_HTTP_ERROR, f"Cassons search request failed: {type(exc).__name__}")
+    except Exception as exc:
+        return failed_lookup(FAILURE_OTHER, f"Cassons search request error: {type(exc).__name__}")
 
     tiles = _parse_cassons_tiles(html_text)
     if not tiles:
-        return LookupResult(status="failed")
+        return failed_lookup(FAILURE_NO_SEARCH_RESULTS, "Cassons search returned no product tiles")
 
     if exact_code:
         code_norm = normalize_code(exact_code)
@@ -318,9 +378,9 @@ def lookup_cassons_by_sku_or_title(query: str, exact_code: Optional[str] = None)
     candidates = list(unique_candidates.values())
 
     if len(candidates) == 0:
-        return LookupResult(status="failed")
+        return failed_lookup(FAILURE_NO_SEARCH_RESULTS, "No Cassons candidate matched query")
     if len(candidates) > 1:
-        return LookupResult(status="ambiguous")
+        return ambiguous_lookup("Multiple Cassons candidates matched the query")
 
     candidate = candidates[0]
     if candidate["image_url"]:
@@ -329,8 +389,10 @@ def lookup_cassons_by_sku_or_title(query: str, exact_code: Optional[str] = None)
     # Fallback: parse product page directly for primary image.
     try:
         product_html = fetch_text(candidate["link"])
-    except (HTTPError, URLError, TimeoutError, Exception):
-        return LookupResult(status="failed")
+    except (HTTPError, URLError, TimeoutError) as exc:
+        return failed_lookup(FAILURE_HTTP_ERROR, f"Cassons product page request failed: {type(exc).__name__}")
+    except Exception as exc:
+        return failed_lookup(FAILURE_OTHER, f"Cassons product page request error: {type(exc).__name__}")
 
     zoom_m = re.search(r'ZOOM\]\((https?://[^\)]+/images/ProductImages/[^\)]+)\)', product_html, re.IGNORECASE)
     if zoom_m:
@@ -344,7 +406,7 @@ def lookup_cassons_by_sku_or_title(query: str, exact_code: Optional[str] = None)
     if og_image:
         return LookupResult(status="found", image_url=og_image)
 
-    return LookupResult(status="failed")
+    return failed_lookup(FAILURE_NO_IMAGE_ON_PAGE, "Cassons product page contains no usable image markers")
 
 
 def lookup_supplier_website_image(supplier_name: str, supplier_sku: str, title: str) -> LookupResult:
@@ -363,7 +425,31 @@ def lookup_supplier_website_image(supplier_name: str, supplier_sku: str, title: 
         return result
 
     # No safe machine-search adapter implemented yet for this supplier website.
-    return LookupResult(status="failed")
+    return failed_lookup(FAILURE_OTHER, f"No supplier image adapter available for supplier: {supplier_name}")
+
+
+def normalize_failure_category(category: str) -> str:
+    normalized = normalize_space(category)
+    if normalized in FAILURE_CATEGORIES:
+        return normalized
+    return FAILURE_OTHER
+
+
+def export_failure_records(records: list[FailureRecord], csv_path: Path) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["SKU", "Brand", "Supplier", "Failure category", "Failure details"])
+        for record in records:
+            writer.writerow(
+                [
+                    record.sku,
+                    record.brand,
+                    record.supplier,
+                    record.failure_category,
+                    record.failure_details,
+                ]
+            )
 
 
 def recover_images_from_supplier_websites(
@@ -383,9 +469,9 @@ def recover_images_from_supplier_websites(
     image_coverage_before = get_image_coverage_percent(cur)
 
     target_sql = """
-        SELECT mp.id, mp.sku, mp.title
+        SELECT mp.id, mp.sku, mp.title, mp.brand
         FROM master_products mp
-        WHERE mp.image_url IS NULL OR TRIM(mp.image_url) = ''
+                WHERE (mp.image_url IS NULL OR TRIM(mp.image_url) = '')
     """
     params: list[object] = []
     supplier_filter = normalize_space(supplier)
@@ -414,6 +500,8 @@ def recover_images_from_supplier_websites(
     images_saved = 0
     failed_lookups = 0
     ambiguous_matches = 0
+    failure_counts = {category: 0 for category in FAILURE_CATEGORIES}
+    failure_records: list[FailureRecord] = []
     processed_in_batch = 0
     last_supplier_processed = supplier_filter or ""
     started_at = time.time()
@@ -423,7 +511,9 @@ def recover_images_from_supplier_websites(
 
     for product in targets:
         product_id = int(product["id"])
+        product_sku = normalize_space(product["sku"])
         master_title = normalize_space(product["title"])
+        product_brand = normalize_space(product["brand"]) if "brand" in product.keys() else ""
 
         cur.execute(
             """
@@ -441,6 +531,9 @@ def recover_images_from_supplier_websites(
 
         assigned_this_product = False
         ambiguous_this_product = False
+        first_failure_supplier = ""
+        first_failure_category = ""
+        first_failure_details = ""
 
         for srow in supplier_rows:
             supplier_name = normalize_space(srow["supplier_name"])
@@ -459,6 +552,10 @@ def recover_images_from_supplier_websites(
 
             if result.status == "ambiguous":
                 ambiguous_this_product = True
+                if not first_failure_category:
+                    first_failure_supplier = supplier_name
+                    first_failure_category = normalize_failure_category(result.failure_category or FAILURE_MULTIPLE_CANDIDATES)
+                    first_failure_details = normalize_space(result.failure_details) or "Multiple candidate products matched"
                 # Continue to next supplier in priority order.
                 continue
 
@@ -476,13 +573,44 @@ def recover_images_from_supplier_websites(
                 if cur.rowcount:
                     images_saved += 1
                     assigned_this_product = True
+                else:
+                    if not first_failure_category:
+                        first_failure_supplier = supplier_name
+                        first_failure_category = FAILURE_DATABASE_UPDATE_FAILED
+                        first_failure_details = "Image was found but database update affected 0 rows"
                 break
+
+            if result.status == "failed" and not first_failure_category:
+                first_failure_supplier = supplier_name
+                first_failure_category = normalize_failure_category(result.failure_category)
+                first_failure_details = normalize_space(result.failure_details) or "Lookup failed without additional details"
 
         if not assigned_this_product:
             if ambiguous_this_product:
                 ambiguous_matches += 1
             else:
                 failed_lookups += 1
+
+            if not first_failure_category:
+                if not supplier_rows:
+                    first_failure_supplier = supplier_filter or "(none)"
+                    first_failure_category = FAILURE_OTHER
+                    first_failure_details = "No enabled supplier rows matched this product"
+                else:
+                    first_failure_supplier = normalize_space(supplier_rows[0]["supplier_name"])
+                    first_failure_category = FAILURE_OTHER
+                    first_failure_details = "No image was assigned for unknown reason"
+
+            failure_counts[first_failure_category] = failure_counts.get(first_failure_category, 0) + 1
+            failure_records.append(
+                FailureRecord(
+                    sku=product_sku,
+                    brand=product_brand,
+                    supplier=first_failure_supplier,
+                    failure_category=first_failure_category,
+                    failure_details=first_failure_details,
+                )
+            )
 
         processed_in_batch += 1
 
@@ -503,6 +631,8 @@ def recover_images_from_supplier_websites(
 
     conn.commit()
 
+    export_failure_records(failure_records, FAILURES_CSV_PATH)
+
     if processed_in_batch and processed_in_batch % COMMIT_INTERVAL != 0:
         print_progress(
             current_supplier=last_supplier_processed,
@@ -517,6 +647,28 @@ def recover_images_from_supplier_websites(
 
     image_coverage_after = get_image_coverage_percent(cur)
 
+    recovery_rate = 0.0
+    if products_scanned > 0:
+        recovery_rate = images_saved / products_scanned * 100.0
+
+    print()
+    print("Batch diagnostics summary:")
+    print(f"Products scanned: {products_scanned}")
+    print(f"Images recovered: {images_saved}")
+    print(f"Recovery rate: {recovery_rate:.2f}%")
+    print()
+    print("Failure summary:")
+    print(f"No search results: {failure_counts.get(FAILURE_NO_SEARCH_RESULTS, 0)}")
+    print(f"HTTP errors: {failure_counts.get(FAILURE_HTTP_ERROR, 0)}")
+    print(f"Supplier page not found: {failure_counts.get(FAILURE_SUPPLIER_PAGE_NOT_FOUND, 0)}")
+    print(f"Multiple candidate products: {failure_counts.get(FAILURE_MULTIPLE_CANDIDATES, 0)}")
+    print(f"No image on page: {failure_counts.get(FAILURE_NO_IMAGE_ON_PAGE, 0)}")
+    print(f"Extraction failures: {failure_counts.get(FAILURE_IMAGE_EXTRACTION_FAILED, 0)}")
+    print(f"Download failures: {failure_counts.get(FAILURE_IMAGE_DOWNLOAD_FAILED, 0)}")
+    print(f"Database failures: {failure_counts.get(FAILURE_DATABASE_UPDATE_FAILED, 0)}")
+    print(f"Other: {failure_counts.get(FAILURE_OTHER, 0)}")
+    print(f"Failure CSV: {FAILURES_CSV_PATH}")
+
     return SupplierImageRecoveryReport(
         batch_size=effective_batch_size,
         products_scanned=products_scanned,
@@ -527,6 +679,8 @@ def recover_images_from_supplier_websites(
         ambiguous_matches=ambiguous_matches,
         image_coverage_before=image_coverage_before,
         image_coverage_after=image_coverage_after,
+        failure_counts=failure_counts,
+        failures_export_path=str(FAILURES_CSV_PATH),
     )
 
 
